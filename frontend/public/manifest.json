@@ -1,0 +1,24 @@
+{
+  "name": "Word Territory",
+  "short_name": "WordTerritory",
+  "description": "A spatial strategy word game. Use words to capture territory. Play the Daily Challenge.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f0f2f5",
+  "theme_color": "#111111",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "categories": ["games", "puzzle"],
+  "lang": "en",
+  "screenshots": [
+    {
+      "src": "/screenshot-1.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "label": "Word Territory gameplay"
+    }
+  ]
+}

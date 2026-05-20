@@ -1,0 +1,670 @@
+import random
+from collections import deque
+from copy import deepcopy
+
+from dictionary import get_words, is_valid_word
+from models import Cell, Coord, GameState, MoveHistoryItem, PreviewMoveResponse, Scores
+
+BOARD_SIZE = 11
+MAX_TURNS = 70
+
+OPENINGS = [
+    ("STONE OPENING", ["T", "A", "O", "E", "R", "N", "S"]),
+    ("RIVER OPENING", ["R", "A", "E", "T", "L", "N", "S"]),
+    ("BRIDGE OPENING", ["B", "R", "I", "D", "G", "E", "S"]),
+    ("LIGHT OPENING", ["L", "I", "G", "H", "T", "E", "R"]),
+    ("WATER OPENING", ["W", "A", "T", "E", "R", "S", "N"]),
+    ("PLANT OPENING", ["P", "L", "A", "N", "T", "E", "R"]),
+    ("GARDEN OPENING", ["S", "E", "A", "T", "R", "N", "L"]),
+    ("FOREST OPENING", ["M", "E", "A", "T", "R", "S", "N"]),
+    ("MARKET OPENING", ["C", "A", "R", "E", "T", "N", "S"]),
+    ("CIRCLE OPENING", ["S", "T", "O", "N", "E", "R", "A"]),
+]
+
+OPENING_COORDS = [(4, 5), (5, 4), (5, 5), (5, 6), (5, 7), (6, 5), (7, 5)]
+
+
+def in_bounds(r: int, c: int) -> bool:
+    return 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE
+
+
+def get_neighbors(r: int, c: int):
+    for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        nr, nc = r + dr, c + dc
+        if in_bounds(nr, nc):
+            yield nr, nc
+
+
+def other_player(player: str) -> str:
+    return "BLUE" if player == "RED" else "RED"
+
+
+def are_adjacent(a, b) -> bool:
+    return abs(a.row - b.row) + abs(a.col - b.col) == 1
+
+
+def word_score(word: str) -> int:
+    n = len(word)
+    if n == 3:
+        return 1
+    if n == 4:
+        return 2
+    if n == 5:
+        return 3
+    if n == 6:
+        return 5
+    return 0
+
+
+def clone_state(state: GameState) -> GameState:
+    return deepcopy(state)
+
+
+def total_score(state: GameState, player: str) -> float:
+    if player == "RED":
+        return state.scores.redTerritory * 1.5 + state.scores.redWord
+    return state.scores.blueTerritory * 1.5 + state.scores.blueWord
+
+
+def count_territory(state: GameState, player: str) -> int:
+    return sum(1 for row in state.board for cell in row if cell.owner == player)
+
+
+def count_locked_cells(state: GameState, player: str) -> int:
+    return sum(1 for row in state.board for cell in row if cell.owner == player and cell.locked)
+
+
+def choose_opening():
+    candidates = OPENINGS[:]
+    random.shuffle(candidates)
+    best = candidates[0]
+    best_score = -1
+    words = get_words()
+    for name, seed in candidates:
+        available = set(seed)
+        score = sum(1 for w in words if 3 <= len(w) <= 4 and all(ch in available for ch in w))
+        if score >= 3:
+            return name, seed
+        if score > best_score:
+            best_score = score
+            best = (name, seed)
+    return best
+
+
+def build_initial_state(bot_level: str = "normal", opening_idx: int | None = None) -> GameState:
+    board = [[Cell(row=r, col=c) for c in range(BOARD_SIZE)] for r in range(BOARD_SIZE)]
+    if opening_idx is not None:
+        opening_name, seed = OPENINGS[opening_idx % len(OPENINGS)]
+    else:
+        opening_name, seed = choose_opening()
+    for (r, c), ch in zip(OPENING_COORDS, seed):
+        board[r][c].letter = ch
+    return GameState(
+        boardSize=BOARD_SIZE,
+        board=board,
+        currentPlayer="RED",
+        turn=1,
+        usedWords=[],
+        recentMoves=[],
+        moveHistory=[],
+        scores=Scores(),
+        winner=None,
+        consecutivePasses=0,
+        vsBot=True,
+        botPlayer="BLUE",
+        botLevel=bot_level,
+        openingName=opening_name,
+        lastChangedCells=[],
+        lastCapturedCells=[],
+        lastLockedCells=[],
+        lastComboLabels=[],
+    )
+
+
+def board_letters_set(state: GameState) -> set[str]:
+    return {cell.letter.upper() for row in state.board for cell in row if cell.letter}
+
+
+def can_spell_from_board(word: str, available_letters: set[str]) -> bool:
+    return all(ch in available_letters for ch in word)
+
+
+def find_candidate_words(state: GameState, limit: int = 15) -> list[str]:
+    """Return words that are ACTUALLY PLAYABLE this turn (path-verified).
+
+    Fix: previous version only checked letter availability, not path feasibility.
+    Many suggestions were phantom words the player could never form.
+    Longer words are shown first — more strategically interesting.
+    """
+    excluded = set(state.usedWords)  # ② Fix: exclude entire game history, not just last 5
+    long_moves = generate_moves_for_lengths(
+        state, {5, 6}, limit_words=60, max_results=(limit // 2) + 2, excluded=excluded
+    )
+    short_moves = generate_moves_for_lengths(
+        state, {3, 4}, limit_words=60, max_results=limit - len(long_moves),
+        excluded=excluded | {m["word"] for m in long_moves}
+    )
+    return [m["word"] for m in (long_moves + short_moves)[:limit]]
+
+
+def snapshot(state: GameState):
+    owners = {(cell.row, cell.col): cell.owner for row in state.board for cell in row}
+    locked = {(cell.row, cell.col): cell.locked for row in state.board for cell in row}
+    red_total = total_score(state, "RED")
+    blue_total = total_score(state, "BLUE")
+    leader = "RED" if red_total > blue_total else "BLUE" if blue_total > red_total else "TIE"
+    return owners, locked, red_total, blue_total, leader
+
+
+def diff_cells(before_state: GameState, after_state: GameState, player: str):
+    before_owner, before_locked, before_red, before_blue, before_leader = snapshot(before_state)
+    after_owner, after_locked, after_red, after_blue, after_leader = snapshot(after_state)
+
+    changed = []
+    captured = []
+    newly_locked = []
+    territory_gain = 0
+    capture_count = 0
+
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            before = before_owner[(r, c)]
+            after = after_owner[(r, c)]
+            if before != after:
+                changed.append(Coord(row=r, col=c))
+            if before != player and after == player:
+                territory_gain += 1
+                if before is not None and before != player:
+                    captured.append(Coord(row=r, col=c))
+                    capture_count += 1
+            if not before_locked[(r, c)] and after_locked[(r, c)] and after == player:
+                newly_locked.append(Coord(row=r, col=c))
+
+    return {
+        "changed": changed,
+        "captured": captured,
+        "newly_locked": newly_locked,
+        "territory_gain": territory_gain,
+        "capture_count": capture_count,
+        "leader_changed": before_leader != after_leader and before_leader != "TIE" and after_leader != "TIE",
+        "red_total": after_red,
+        "blue_total": after_blue,
+    }
+
+
+def combo_labels(word: str, territory_gain: int, lock_gain: int, capture_count: int, leader_changed: bool) -> list[str]:
+    labels = []
+    if len(word) >= 5:
+        labels.append("POWER WORD")
+    if territory_gain >= 8:
+        labels.append("MEGA TERRITORY")
+    if lock_gain >= 3:
+        labels.append("LOCK CHAIN")
+    if capture_count >= 1:
+        labels.append("CAPTURE")
+    if capture_count >= 2:
+        labels.append("DOUBLE CAPTURE")
+    if leader_changed:
+        labels.append("SWING MOVE")
+    return labels
+
+
+def apply_locks(state: GameState):
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            cell = state.board[r][c]
+            if cell.owner is None:
+                cell.locked = False
+                continue
+            owner = cell.owner
+            all_same = True
+            for nr, nc in get_neighbors(r, c):
+                if state.board[nr][nc].owner != owner:
+                    all_same = False
+                    break
+            if r in (0, BOARD_SIZE - 1) or c in (0, BOARD_SIZE - 1):
+                all_same = False
+            cell.locked = all_same
+
+
+def apply_captures(state: GameState, player: str):
+    visited = set()
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            if (r, c) in visited or state.board[r][c].owner == player:
+                continue
+            region = []
+            queue = deque([(r, c)])
+            touches_edge = False
+            while queue:
+                cr, cc = queue.popleft()
+                if (cr, cc) in visited:
+                    continue
+                visited.add((cr, cc))
+                current = state.board[cr][cc]
+                if current.owner == player:
+                    continue
+                region.append((cr, cc))
+                if cr in (0, BOARD_SIZE - 1) or cc in (0, BOARD_SIZE - 1):
+                    touches_edge = True
+                for nr, nc in get_neighbors(cr, cc):
+                    if (nr, nc) not in visited and state.board[nr][nc].owner != player:
+                        queue.append((nr, nc))
+            if not touches_edge:
+                for rr, cc in region:
+                    target = state.board[rr][cc]
+                    if not target.locked or target.owner == player:
+                        target.owner = player
+
+
+def recalc_scores(state: GameState, current_player_for_word_score: str | None = None, last_word: str | None = None):
+    state.scores.redTerritory = count_territory(state, "RED")
+    state.scores.blueTerritory = count_territory(state, "BLUE")
+    if last_word and current_player_for_word_score:
+        score = word_score(last_word)
+        if current_player_for_word_score == "RED":
+            state.scores.redWord += score
+        else:
+            state.scores.blueWord += score
+
+
+def path_contains(path, row: int, col: int) -> bool:
+    return any(p.row == row and p.col == col for p in path)
+
+
+def validate_path_and_word(state: GameState, row: int, col: int, letter: str, path):
+    if not path_contains(path, row, col):
+        raise ValueError("Path must include placed cell")
+    seen = set()
+    chars = []
+    for i, p in enumerate(path):
+        if not in_bounds(p.row, p.col):
+            raise ValueError("Path out of bounds")
+        key = (p.row, p.col)
+        if key in seen:
+            raise ValueError("Path cannot reuse same cell")
+        seen.add(key)
+        if i > 0 and not are_adjacent(path[i - 1], p):
+            raise ValueError("Path must be orthogonally adjacent")
+        cell = state.board[p.row][p.col]
+        if p.row == row and p.col == col:
+            chars.append(letter.upper())
+        elif cell.letter is not None:
+            chars.append(cell.letter.upper())
+        else:
+            raise ValueError("All non-placed path cells must contain letters")
+    return "".join(chars).upper()
+
+
+def recent_duplicate_blocked(state: GameState, word: str) -> bool:
+    """Block any word already used in this game (not just the last few moves).
+    Previous behaviour only blocked the last 3 moves, allowing the same word
+    to cycle back every 4 turns. usedWords tracks the full game history.
+    """
+    return word.upper() in {w.upper() for w in state.usedWords}
+
+
+def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, path):
+    if state.winner:
+        raise ValueError("Game already finished")
+    if not in_bounds(row, col):
+        raise ValueError("Out of bounds")
+    if state.board[row][col].letter is not None:
+        raise ValueError("Cell already occupied")
+    if not letter or not letter.isalpha() or len(letter) != 1:
+        raise ValueError("Letter must be one alphabet character")
+    if not any(state.board[nr][nc].letter for nr, nc in get_neighbors(row, col)):
+        raise ValueError("Placed letter must connect to existing letters")
+
+    word = validate_path_and_word(state, row, col, letter, path)
+    if len(word) < 3 or len(word) > 6:
+        raise ValueError("Word must be 3 to 6 letters")
+    if recent_duplicate_blocked(state, word):
+        raise ValueError("Word used too recently")
+    if not is_valid_word(word):
+        raise ValueError(f"Not in the word list: {word}")
+
+    before = clone_state(state)
+    temp = deepcopy(state)
+    temp.board[row][col].letter = letter.upper()
+
+    player = state.currentPlayer
+    for p in path:
+        cell = temp.board[p.row][p.col]
+        if not cell.locked or cell.owner == player:
+            cell.owner = player
+
+    apply_captures(temp, player)
+    apply_locks(temp)
+    recalc_scores(temp, current_player_for_word_score=player, last_word=word)
+
+    delta = diff_cells(before, temp, player)
+    combos = combo_labels(word, delta["territory_gain"], len(delta["newly_locked"]), delta["capture_count"], delta["leader_changed"])
+
+    item = MoveHistoryItem(
+        turn=state.turn,
+        player=player,
+        word=word,
+        moveType="WORD",
+        placedRow=row,
+        placedCol=col,
+        placedLetter=letter.upper(),
+        path=[Coord(row=p.row, col=p.col) for p in path],
+        wordScoreGained=word_score(word),
+        territoryGained=delta["territory_gain"],
+        lockedCellsGained=len(delta["newly_locked"]),
+        captureCount=delta["capture_count"],
+        comboLabels=combos,
+        redTotalAfter=delta["red_total"],
+        blueTotalAfter=delta["blue_total"],
+    )
+
+    temp.usedWords.append(word)
+    temp.moveHistory.append(item)
+    combo_suffix = f" [{' | '.join(combos)}]" if combos else ""
+    temp.recentMoves = [f"{player}: {word}{combo_suffix}"] + temp.recentMoves[:4]
+    temp.lastChangedCells = delta["changed"]
+    temp.lastCapturedCells = delta["captured"]
+    temp.lastLockedCells = delta["newly_locked"]
+    temp.lastComboLabels = combos
+    temp.currentPlayer = other_player(player)
+    temp.turn += 1
+    temp.consecutivePasses = 0
+
+    if is_game_over(temp):
+        temp.winner = decide_winner(temp)
+    return temp
+
+
+def apply_seed_move(state: GameState, row: int, col: int, letter: str):
+    if state.winner:
+        raise ValueError("Game already finished")
+    if not in_bounds(row, col) or state.board[row][col].letter is not None:
+        raise ValueError("Seed move requires an empty cell")
+    if not letter or not letter.isalpha() or len(letter) != 1:
+        raise ValueError("Letter must be one alphabet character")
+    if not any(state.board[nr][nc].letter for nr, nc in get_neighbors(row, col)):
+        raise ValueError("Seed move must be next to existing letters")
+
+    temp = deepcopy(state)
+    player = state.currentPlayer
+    temp.board[row][col].letter = letter.upper()
+    temp.currentPlayer = other_player(player)
+    temp.turn += 1
+    temp.consecutivePasses = 0
+    temp.lastChangedCells = [Coord(row=row, col=col)]
+    temp.lastCapturedCells = []
+    temp.lastLockedCells = []
+    temp.lastComboLabels = []
+    item = MoveHistoryItem(
+        turn=state.turn,
+        player=player,
+        word="SEED MOVE",
+        moveType="SEED",
+        placedRow=row,
+        placedCol=col,
+        placedLetter=letter.upper(),
+        path=[Coord(row=row, col=col)],
+        redTotalAfter=total_score(temp, "RED"),
+        blueTotalAfter=total_score(temp, "BLUE"),
+    )
+    temp.moveHistory.append(item)
+    temp.recentMoves = [f"{player}: SEED MOVE ({letter.upper()})"] + temp.recentMoves[:4]
+    if is_game_over(temp):
+        temp.winner = decide_winner(temp)
+    return temp
+
+
+def pass_turn(state: GameState):
+    if state.winner:
+        return state
+    temp = deepcopy(state)
+    current = temp.currentPlayer
+    temp.currentPlayer = other_player(temp.currentPlayer)
+    temp.turn += 1
+    temp.consecutivePasses += 1
+    temp.recentMoves = [f"{current}: PASS"] + temp.recentMoves[:4]
+    temp.lastChangedCells = []
+    temp.lastCapturedCells = []
+    temp.lastLockedCells = []
+    temp.lastComboLabels = []
+    if is_game_over(temp):
+        temp.winner = decide_winner(temp)
+    return temp
+
+
+def preview_move(state: GameState, row: int, col: int, letter: str, path) -> PreviewMoveResponse:
+    try:
+        word = validate_path_and_word(state, row, col, letter, path) if path else ""
+        includes = path_contains(path, row, col) if path else False
+        valid_len = 3 <= len(word) <= 6
+        in_dict = is_valid_word(word) if valid_len else False
+        response = PreviewMoveResponse(
+            word=word,
+            isValidLength=valid_len,
+            includesPlacedCell=includes,
+            isInDictionary=in_dict,
+            wordScore=word_score(word) if in_dict else 0,
+        )
+        if in_dict and not recent_duplicate_blocked(state, word):
+            after = validate_and_apply_move(clone_state(state), row, col, letter, path)
+            last = after.moveHistory[-1]
+            response.territoryGain = last.territoryGained
+            response.lockGain = last.lockedCellsGained
+            response.captureHappened = last.captureCount > 0
+            response.captureCount = last.captureCount
+            response.comboLabels = last.comboLabels
+        return response
+    except Exception as exc:
+        return PreviewMoveResponse(errorMessage=str(exc))
+
+
+def is_game_over(state: GameState) -> bool:
+    if state.turn > MAX_TURNS or state.consecutivePasses >= 2:
+        return True
+    return all(cell.letter is not None for row in state.board for cell in row)
+
+
+def decide_winner(state: GameState):
+    red = total_score(state, "RED")
+    blue = total_score(state, "BLUE")
+    if red > blue:
+        return "RED"
+    if blue > red:
+        return "BLUE"
+    return None
+
+
+# BOT
+
+def get_placeable_empty_cells(state: GameState):
+    return [(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE) if state.board[r][c].letter is None and any(state.board[nr][nc].letter for nr, nc in get_neighbors(r, c))]
+
+
+def generate_paths_from_cell(state: GameState, placed, target_len: int):
+    results = []
+    seen = set()
+
+    def dfs(path):
+        if len(path) == target_len:
+            if placed in path:
+                key = tuple(path)
+                if key not in seen:
+                    seen.add(key)
+                    results.append(path[:])
+            return
+        r, c = path[-1]
+        for nr, nc in get_neighbors(r, c):
+            if (nr, nc) in path:
+                continue
+            if (nr, nc) != placed and state.board[nr][nc].letter is None:
+                continue
+            path.append((nr, nc))
+            dfs(path)
+            path.pop()
+
+    # Start from placed cell or existing cells near it; this supports placed letter in middle/end.
+    starts = [placed]
+    for nr, nc in get_neighbors(placed[0], placed[1]):
+        if state.board[nr][nc].letter:
+            starts.append((nr, nc))
+    for start in starts:
+        dfs([start])
+    return results
+
+
+def letters_from_path(state: GameState, path, placed, placed_letter):
+    chars = []
+    for r, c in path:
+        if (r, c) == placed:
+            chars.append(placed_letter)
+        else:
+            cell = state.board[r][c]
+            if not cell.letter:
+                return None
+            chars.append(cell.letter)
+    return "".join(chars).upper()
+
+
+def find_word_path_for_target(state: GameState, target_word: str):
+    target_word = target_word.upper()
+    for er, ec in get_placeable_empty_cells(state):
+        for idx, ch in enumerate(target_word):
+            # placed letter must supply the matching letter at some path position.
+            for path in generate_paths_from_cell(state, (er, ec), len(target_word)):
+                if (er, ec) not in path:
+                    continue
+                if path.index((er, ec)) != idx:
+                    continue
+                if letters_from_path(state, path, (er, ec), ch) == target_word:
+                    return {
+                        "row": er,
+                        "col": ec,
+                        "letter": ch,
+                        "path": [Coord(row=r, col=c) for r, c in path],
+                        "word": target_word,
+                    }
+    return None
+
+
+def generate_moves_for_lengths(
+    state: GameState,
+    lengths: set[int],
+    limit_words: int,
+    max_results: int,
+    excluded: set[str] | None = None,
+) -> list[dict]:
+    """Find legal moves for the given word lengths.
+
+    excluded: words to skip entirely (for bot: pass state.usedWords to prevent
+              any repetition; for suggestions: pass recent few words).
+              Defaults to the last-3-moves window used by the validator.
+    """
+    available = board_letters_set(state)
+    if excluded is None:
+        excluded = {m.word for m in state.moveHistory[-3:] if m.moveType == "WORD"}
+    # All letters available because bot/player places exactly one new letter
+    all_letters = available | set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+    def board_overlap(w: str) -> int:
+        """Count letters in w that already exist on board — higher = more likely to have a valid path."""
+        return sum(1 for c in w if c in available)
+
+    words = sorted(
+        (w for w in get_words() if len(w) in lengths and w not in excluded and can_spell_from_board(w, all_letters)),
+        # Prefer words that use more existing board letters (faster to find a path),
+        # tie-break: longer words first (stronger moves), then alphabetical
+        key=lambda w: (-board_overlap(w), -len(w), w),
+    )
+    results = []
+    for word in words[:limit_words]:
+        move = find_word_path_for_target(state, word)
+        if move:
+            results.append(move)
+            if len(results) >= max_results:
+                break
+    return results
+
+
+def simulate_move(state: GameState, move):
+    return validate_and_apply_move(clone_state(state), move["row"], move["col"], move["letter"], move["path"])
+
+
+def evaluate_state_for_player(state: GameState, player: str) -> float:
+    opponent = other_player(player)
+    return (
+        (total_score(state, player) - total_score(state, opponent)) * 5.0
+        + (count_territory(state, player) - count_territory(state, opponent)) * 2.2
+        + (count_locked_cells(state, player) - count_locked_cells(state, opponent)) * 4.0
+    )
+
+
+def generate_normal_moves(state: GameState) -> list[dict]:
+    # Bot excludes every word it has already played this game (prevents repetition)
+    used = set(state.usedWords)
+    return generate_moves_for_lengths(state, {3, 4}, limit_words=80, max_results=40, excluded=used)
+
+
+def generate_strong_moves(state: GameState) -> list[dict]:
+    used = set(state.usedWords)
+    moves = generate_moves_for_lengths(state, {5, 6}, limit_words=40, max_results=20, excluded=used)
+    if len(moves) < 8:
+        moves += generate_moves_for_lengths(
+            state, {3, 4}, limit_words=40, max_results=20,
+            excluded=used | {m["word"] for m in moves}
+        )
+    return moves[:20]
+
+
+def choose_bot_move(state: GameState):
+    if state.botLevel == "normal":
+        moves = generate_normal_moves(state)
+        return moves[0] if moves else None
+    legal_moves = generate_strong_moves(state)[:8]
+    if not legal_moves:
+        return None
+    player = state.currentPlayer
+    best_move = None
+    best_value = -10**9
+    for move in legal_moves:
+        try:
+            next_state = simulate_move(state, move)
+        except Exception:
+            continue
+        my_value = evaluate_state_for_player(next_state, player)
+        opponent = other_player(player)
+        opp_best = 0
+        for opp_move in generate_strong_moves(next_state)[:5]:
+            try:
+                opp_state = simulate_move(next_state, opp_move)
+                opp_best = max(opp_best, evaluate_state_for_player(opp_state, opponent))
+            except Exception:
+                continue
+        last = next_state.moveHistory[-1]
+        combo_bonus = len(last.comboLabels) * 3
+        value = my_value - (opp_best * 0.9) + word_score(move["word"]) * 1.4 + combo_bonus
+        if value > best_value:
+            best_value = value
+            best_move = move
+    return best_move
+
+
+def choose_seed_move(state: GameState):
+    letters = list("ETAONRISL")
+    cells = get_placeable_empty_cells(state)
+    if not cells:
+        return None
+    r, c = random.choice(cells)
+    return r, c, random.choice(letters)
+
+
+def apply_bot_move(state: GameState):
+    if state.winner:
+        return state
+    move = choose_bot_move(state)
+    if move:
+        return validate_and_apply_move(state, move["row"], move["col"], move["letter"], move["path"])
+    seed = choose_seed_move(state)
+    if seed:
+        return apply_seed_move(state, *seed)
+    return pass_turn(state)

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#111111" rx="80"/>
+  <!-- Territory grid suggestion -->
+  <rect x="80" y="80" width="160" height="160" fill="#c0392b" opacity="0.85" rx="12"/>
+  <rect x="260" y="80" width="80" height="80" fill="#c0392b" opacity="0.85" rx="12"/>
+  <rect x="260" y="180" width="170" height="60" fill="#2271b3" opacity="0.85" rx="12"/>
+  <rect x="80" y="260" width="60" height="170" fill="#2271b3" opacity="0.85" rx="12"/>
+  <rect x="160" y="340" width="170" height="90" fill="#2271b3" opacity="0.85" rx="12"/>
+  <!-- W letter -->
+  <text x="256" y="300" font-family="Arial Black, Arial" font-weight="900" font-size="180"
+    fill="white" text-anchor="middle" dominant-baseline="middle" opacity="0.15">W</text>
+  <!-- WT letters centered -->
+  <text x="256" y="270" font-family="Arial Black, Arial" font-weight="900" font-size="120"
+    fill="white" text-anchor="middle" dominant-baseline="middle">WT</text>
+</svg>

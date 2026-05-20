@@ -1,0 +1,55 @@
+MIT License
+
+Copyright (c) 2026 Keni Koyama
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+Original game concept and rule system by Keni Koyama.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+────────────────────────────────────────────────────────────────
+THIRD-PARTY DATA NOTICE
+────────────────────────────────────────────────────────────────
+
+The file backend/words.txt was generated using the following third-party
+resources and is NOT covered by the MIT License above:
+
+  wordfreq by Robyn Speer et al.
+  https://github.com/rspeer/wordfreq
+  License: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
+
+  pyenchant / en_US dictionary (used for validation at generation time only)
+  License: LGPL
+
+The generated word list (words.txt) is provided under CC BY-SA 4.0 in
+compliance with the ShareAlike requirement of wordfreq.
+
+If you redistribute this repository, you must:
+  1. Retain this attribution notice.
+  2. License any derivative word list under CC BY-SA 4.0 or a compatible license.
+  3. Not sublicense words.txt under MIT-only terms.
+
+The game source code (all .py, .js, .jsx, .json files excluding words.txt)
+remains under MIT License as stated above.
+
+────────────────────────────────────────────────────────────────
+AUTHOR
+────────────────────────────────────────────────────────────────
+
+Original game concept and rule system by Keni Koyama.
+LinkedIn: https://www.linkedin.com/in/kuni-koyama-6566b7105/
