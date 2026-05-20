@@ -602,15 +602,15 @@ def evaluate_state_for_player(state: GameState, player: str) -> float:
 def generate_normal_moves(state: GameState) -> list[dict]:
     # Bot excludes every word it has already played this game (prevents repetition)
     used = set(state.usedWords)
-    return generate_moves_for_lengths(state, {3, 4}, limit_words=80, max_results=40, excluded=used)
-
+return generate_moves_for_lengths(state, {3, 4}, limit_words=30, max_results=10, excluded=used)
 
 def generate_strong_moves(state: GameState) -> list[dict]:
     used = set(state.usedWords)
     moves = generate_moves_for_lengths(state, {5, 6}, limit_words=40, max_results=20, excluded=used)
-    if len(moves) < 8:
-        moves += generate_moves_for_lengths(
-            state, {3, 4}, limit_words=40, max_results=20,
+   moves = generate_moves_for_lengths(state, {5, 6}, limit_words=20, max_results=8, excluded=used)
+if len(moves) < 5:
+    moves += generate_moves_for_lengths(
+        state, {3, 4}, limit_words=20, max_results=8,
             excluded=used | {m["word"] for m in moves}
         )
     return moves[:20]
@@ -620,8 +620,7 @@ def choose_bot_move(state: GameState):
     if state.botLevel == "normal":
         moves = generate_normal_moves(state)
         return moves[0] if moves else None
-    legal_moves = generate_strong_moves(state)[:8]
-    if not legal_moves:
+for opp_move in generate_strong_moves(next_state)[:3]:    if not legal_moves:
         return None
     player = state.currentPlayer
     best_move = None
@@ -634,7 +633,7 @@ def choose_bot_move(state: GameState):
         my_value = evaluate_state_for_player(next_state, player)
         opponent = other_player(player)
         opp_best = 0
-        for opp_move in generate_strong_moves(next_state)[:5]:
+        for opp_move in generate_strong_moves(next_state)[:3]:
             try:
                 opp_state = simulate_move(next_state, opp_move)
                 opp_best = max(opp_best, evaluate_state_for_player(opp_state, opponent))
