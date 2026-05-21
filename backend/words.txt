@@ -777,6 +777,7 @@ beetle
 beets
 befall
 befell
+before
 beg
 began
 begets
@@ -795,6 +796,7 @@ behest
 behind
 behold
 beige
+being
 beings
 belfry
 belief
@@ -835,6 +837,7 @@ berths
 beryl
 beset
 beside
+best
 bested
 bestow
 bests
@@ -2752,6 +2755,7 @@ doused
 dove
 doves
 dow
+down
 downed
 downer
 downs
@@ -4049,6 +4053,7 @@ godson
 goer
 goers
 goes
+going
 goings
 gold
 golden
@@ -4583,6 +4588,7 @@ holt
 holy
 homage
 hombre
+home
 homely
 homer
 homers
@@ -5286,6 +5292,7 @@ lashes
 lass
 lassie
 lasso
+last
 lasted
 lastly
 lasts
@@ -5458,6 +5465,7 @@ lien
 liens
 lies
 lieu
+life
 lift
 lifted
 lifter
@@ -5602,9 +5610,11 @@ lolly
 lone
 lonely
 loner
+long
 longed
 longer
 longs
+look
 looked
 looker
 looks
@@ -5653,6 +5663,7 @@ louis
 lounge
 louse
 lousy
+love
 loved
 lovely
 lover
@@ -5733,6 +5744,7 @@ madam
 madame
 madden
 madder
+made
 madly
 madman
 madmen
@@ -5816,6 +5828,7 @@ mantra
 mantua
 manual
 manure
+many
 map
 maple
 maples
@@ -6395,6 +6408,7 @@ neck
 necked
 necks
 nectar
+need
 needed
 needle
 needs
@@ -6423,6 +6437,7 @@ nettle
 neural
 neuron
 neuter
+never
 newbie
 newer
 newest
@@ -7740,6 +7755,7 @@ reader
 reads
 ready
 real
+really
 realm
 realms
 reals
@@ -9355,6 +9371,7 @@ stiff
 stifle
 stigma
 stiles
+still
 stills
 stilts
 sting
@@ -9656,6 +9673,7 @@ tailor
 tails
 taint
 taka
+take
 taken
 taker
 takers
@@ -10859,6 +10877,7 @@ whew
 whey
 which
 whiff
+while
 whilst
 whim
 whims
@@ -11011,6 +11030,7 @@ worded
 words
 wordy
 wore
+work
 worked
 worker
 works
@@ -11084,9 +11104,11 @@ yawn
 yawns
 yea
 yeah
+year
 yearly
 yearn
 yearns
+years
 yeast
 yeasts
 yell
