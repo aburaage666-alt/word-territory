@@ -599,35 +599,92 @@ def evaluate_state_for_player(state: GameState, player: str) -> float:
     )
 
 
+def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: set) -> list[dict]:
+    """
+    Fast path-first move finder for bot use on Render free tier.
+
+    Strategy: enumerate short paths from each placeable cell, then
+    check if the resulting letter sequence is a valid word.
+    This avoids the slow word→path search used by generate_moves_for_lengths.
+
+    Complexity: O(placeable_cells * 4^max_len) path enumeration,
+    with O(1) dictionary lookup per path — much faster on sparse boards.
+    """
+    words = get_words()
+    results = []
+    placeable = get_placeable_empty_cells(state)
+
+    import string
+    LETTERS = list(string.ascii_uppercase)
+
+    for (er, ec) in placeable:
+        # DFS to enumerate paths of length 3..max_len starting from placed cell
+        # and from its neighbours (placed letter can be anywhere)
+        starts = [(er, ec)]
+        for nr, nc in get_neighbors(er, ec):
+            if state.board[nr][nc].letter:
+                starts.append((nr, nc))
+
+        for start in starts:
+            stack = [([start], set([start]))]
+            while stack:
+                path, visited = stack.pop()
+                plen = len(path)
+
+                # Try every possible letter at the placed position
+                for placed_letter in LETTERS:
+                    word = letters_from_path(state, path, (er, ec), placed_letter)
+                    if word and len(word) >= 3 and word in words and word not in excluded:
+                        results.append({
+                            "row": er, "col": ec,
+                            "letter": placed_letter,
+                            "path": [Coord(row=r, col=c) for r, c in path],
+                            "word": word,
+                        })
+                        if len(results) >= max_results:
+                            return results
+
+                if plen >= max_len:
+                    continue
+
+                r, c = path[-1]
+                for nr, nc in get_neighbors(r, c):
+                    if (nr, nc) in visited:
+                        continue
+                    if (nr, nc) != (er, ec) and not state.board[nr][nc].letter:
+                        continue
+                    stack.append((path + [(nr, nc)], visited | {(nr, nc)}))
+
+    return results
+
+
 def generate_normal_moves(state: GameState) -> list[dict]:
-    # Render free tier: minimal candidates for fast response (<1s)
     used = set(state.usedWords)
-    return generate_moves_for_lengths(state, {3, 4}, limit_words=15, max_results=5, excluded=used)
+    return _fast_bot_moves(state, max_len=4, max_results=8, excluded=used)
 
 
 def generate_strong_moves(state: GameState) -> list[dict]:
-    # Render free tier: slightly more candidates than normal but still fast
     used = set(state.usedWords)
-    moves = generate_moves_for_lengths(state, {5, 6}, limit_words=15, max_results=5, excluded=used)
-    if len(moves) < 3:
-        moves += generate_moves_for_lengths(
-            state, {3, 4}, limit_words=15, max_results=5,
-            excluded=used | {m["word"] for m in moves}
-        )
-    return moves[:6]
+    moves = _fast_bot_moves(state, max_len=6, max_results=10, excluded=used)
+    return moves
 
 
 def choose_bot_move(state: GameState):
     if state.botLevel == "normal":
-        # Normal bot: just pick best scored move, no lookahead
         moves = generate_normal_moves(state)
         if not moves:
             return None
-        return max(moves, key=lambda m: (
-            m.get("territory_gain", 0) * 1.5 + word_score(m["word"])
-        ))
-    # Strong bot: evaluate top 5 moves, NO opponent lookahead (too slow on free tier)
-    legal_moves = generate_strong_moves(state)[:5]
+        # Pick move with best territory + word score (no simulation needed)
+        def quick_score(m):
+            try:
+                ns = simulate_move(state, m)
+                return evaluate_state_for_player(ns, state.currentPlayer)
+            except Exception:
+                return word_score(m["word"])
+        return max(moves, key=quick_score)
+
+    # Strong bot: score all candidates, pick best
+    legal_moves = generate_strong_moves(state)
     if not legal_moves:
         return None
     player = state.currentPlayer
