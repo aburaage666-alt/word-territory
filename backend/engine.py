@@ -6,7 +6,7 @@ from dictionary import get_words, is_valid_word
 from models import Cell, Coord, GameState, MoveHistoryItem, PreviewMoveResponse, Scores
 
 BOARD_SIZE = 11
-MAX_TURNS = 70
+MAX_TURNS = 50
 
 OPENINGS = [
     ("STONE OPENING", ["T", "A", "O", "E", "R", "N", "S"]),
@@ -130,21 +130,14 @@ def can_spell_from_board(word: str, available_letters: set[str]) -> bool:
 
 
 def find_candidate_words(state: GameState, limit: int = 15) -> list[str]:
-    """Return words that are ACTUALLY PLAYABLE this turn (path-verified).
+    """Return words that are ACTUALLY PLAYABLE this turn (path-verified, fast).
 
-    Fix: previous version only checked letter availability, not path feasibility.
-    Many suggestions were phantom words the player could never form.
-    Longer words are shown first — more strategically interesting.
+    Uses the same fast path-first algorithm as the bot so suggestions
+    are always genuinely playable and return quickly on Render free tier.
     """
-    excluded = set(state.usedWords)  # ② Fix: exclude entire game history, not just last 5
-    long_moves = generate_moves_for_lengths(
-        state, {5, 6}, limit_words=60, max_results=(limit // 2) + 2, excluded=excluded
-    )
-    short_moves = generate_moves_for_lengths(
-        state, {3, 4}, limit_words=60, max_results=limit - len(long_moves),
-        excluded=excluded | {m["word"] for m in long_moves}
-    )
-    return [m["word"] for m in (long_moves + short_moves)[:limit]]
+    excluded = set(state.usedWords)
+    moves = _fast_bot_moves(state, max_len=4, max_results=limit, excluded=excluded)
+    return [m["word"] for m in moves]
 
 
 def snapshot(state: GameState):
