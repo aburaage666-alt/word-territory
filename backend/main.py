@@ -114,7 +114,40 @@ def bot_move(game_id: str):
         raise HTTPException(status_code=404, detail="Game not found")
     if state.currentPlayer != state.botPlayer:
         raise HTTPException(status_code=400, detail="It is not the bot's turn")
-    next_state = apply_bot_move(state)
+
+    # Run bot move in a thread with a hard 4-second timeout.
+    # If the bot cannot decide in time, apply_seed_move is used as fallback
+    # so the game never hangs on "Bot is thinking..."
+    import concurrent.futures, random
+
+    def run_bot():
+        return apply_bot_move(state)
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(run_bot)
+            next_state = future.result(timeout=4)
+    except concurrent.futures.TimeoutError:
+        # Fallback: place a random letter on a legal cell (instant)
+        board = state.board
+        legal = [
+            (r, c)
+            for r in range(len(board))
+            for c in range(len(board[r]))
+            if not board[r][c].letter and any(
+                board[r2][c2].letter
+                for r2, c2 in [(r-1,c),(r+1,c),(r,c-1),(r,c+1)]
+                if 0 <= r2 < len(board) and 0 <= c2 < len(board[r2])
+            )
+        ]
+        if legal:
+            row, col = random.choice(legal)
+            import string
+            letter = random.choice(string.ascii_uppercase)
+            next_state = apply_seed_move(state, row, col, letter)
+        else:
+            next_state = pass_turn(state)
+
     GAMES[game_id] = next_state
     return next_state
 
