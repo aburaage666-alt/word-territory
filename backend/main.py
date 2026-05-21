@@ -152,6 +152,15 @@ def bot_move(game_id: str):
     return next_state
 
 
+# ── Health check (for UptimeRobot / monitoring — accepts GET and HEAD) ────────
+
+@app.get("/health")
+@app.head("/health")
+def health():
+    """Lightweight health check. Returns 200 OK for both GET and HEAD requests."""
+    return {"status": "ok"}
+
+
 # ── Daily Challenge ──────────────────────────────────────────────────────────
 
 @app.get("/daily/today", response_model=DailyInfo)
