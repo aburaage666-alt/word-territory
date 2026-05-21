@@ -296,7 +296,9 @@ export default function Home() {
   // ── bot auto-move ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state || !gameId) return;
-    if (state.winner !== null && state.winner !== undefined) return;
+    // winner is null = in progress, string = game over, undefined = not yet set
+    // Only skip if game is definitively over (winner is a non-null string)
+    if (state.winner) return;
     if (state.currentPlayer !== state.botPlayer) return;
     let dead = false;
     (async () => {
@@ -306,8 +308,11 @@ export default function Home() {
         const next = await botMove(gameId);
         if (dead) return;
         setState(next); reset(); setSugg(await getSuggestions(gameId));
-      } catch(e) { if (!dead) setError(e.message || "Bot failed"); }
-      finally { if (!dead) setThinking(false); }
+      } catch(e) {
+        if (!dead) setError(e.message || "Bot failed");
+      } finally {
+        if (!dead) setThinking(false);
+      }
     })();
     return () => { dead = true; };
   }, [state?.turn, state?.currentPlayer]);
