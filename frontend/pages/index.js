@@ -296,25 +296,25 @@ export default function Home() {
   // ── bot auto-move ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state || !gameId) return;
-    // winner is null = in progress, string = game over, undefined = not yet set
-    // Only skip if game is definitively over (winner is a non-null string)
     if (state.winner) return;
     if (state.currentPlayer !== state.botPlayer) return;
-    let dead = false;
-    (async () => {
+    let cancelled = false;
+    const run = async () => {
+      setThinking(true);
       try {
-        setThinking(true);
         await new Promise(r => setTimeout(r, 350));
         const next = await botMove(gameId);
-        if (dead) return;
-        setState(next); reset(); setSugg(await getSuggestions(gameId));
+        if (cancelled) return;
+        setState(next);
+        reset();
+        try { setSugg(await getSuggestions(gameId)); } catch(_) {}
       } catch(e) {
-        if (!dead) setError(e.message || "Bot failed");
-      } finally {
-        if (!dead) setThinking(false);
+        if (!cancelled) setError(e.message || "Bot failed");
       }
-    })();
-    return () => { dead = true; };
+      if (!cancelled) setThinking(false);
+    };
+    run();
+    return () => { cancelled = true; setThinking(false); };
   }, [state?.turn, state?.currentPlayer]);
 
   // ── game over ────────────────────────────────────────────────────────────
