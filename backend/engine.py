@@ -713,10 +713,21 @@ def choose_seed_move(state: GameState):
 def apply_bot_move(state: GameState):
     if state.winner:
         return state
+    # Try word move
     move = choose_bot_move(state)
     if move:
-        return validate_and_apply_move(state, move["row"], move["col"], move["letter"], move["path"])
+        try:
+            return validate_and_apply_move(
+                state, move["row"], move["col"], move["letter"], move["path"]
+            )
+        except Exception:
+            pass  # Fall through to seed move
+    # Fallback: seed move
     seed = choose_seed_move(state)
     if seed:
-        return apply_seed_move(state, *seed)
+        try:
+            return apply_seed_move(state, *seed)
+        except Exception:
+            pass
+    # Last resort: pass
     return pass_turn(state)
