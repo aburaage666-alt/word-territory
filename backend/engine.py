@@ -606,14 +606,13 @@ return generate_moves_for_lengths(state, {3, 4}, limit_words=30, max_results=10,
 
 def generate_strong_moves(state: GameState) -> list[dict]:
     used = set(state.usedWords)
-    moves = generate_moves_for_lengths(state, {5, 6}, limit_words=40, max_results=20, excluded=used)
-   moves = generate_moves_for_lengths(state, {5, 6}, limit_words=20, max_results=8, excluded=used)
-if len(moves) < 5:
-    moves += generate_moves_for_lengths(
-        state, {3, 4}, limit_words=20, max_results=8,
+    moves = generate_moves_for_lengths(state, {5, 6}, limit_words=20, max_results=8, excluded=used)
+    if len(moves) < 5:
+        moves += generate_moves_for_lengths(
+            state, {3, 4}, limit_words=20, max_results=8,
             excluded=used | {m["word"] for m in moves}
         )
-    return moves[:20]
+    return moves[:10]
 
 
 def choose_bot_move(state: GameState):
