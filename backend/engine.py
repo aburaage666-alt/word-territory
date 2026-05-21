@@ -600,29 +600,34 @@ def evaluate_state_for_player(state: GameState, player: str) -> float:
 
 
 def generate_normal_moves(state: GameState) -> list[dict]:
-    # Render free tier: keep limits low for fast response
+    # Render free tier: minimal candidates for fast response (<1s)
     used = set(state.usedWords)
-    return generate_moves_for_lengths(state, {3, 4}, limit_words=30, max_results=10, excluded=used)
+    return generate_moves_for_lengths(state, {3, 4}, limit_words=15, max_results=5, excluded=used)
 
 
 def generate_strong_moves(state: GameState) -> list[dict]:
-    # Render free tier: cap candidates to avoid timeout
+    # Render free tier: slightly more candidates than normal but still fast
     used = set(state.usedWords)
-    moves = generate_moves_for_lengths(state, {5, 6}, limit_words=20, max_results=8, excluded=used)
-    if len(moves) < 5:
+    moves = generate_moves_for_lengths(state, {5, 6}, limit_words=15, max_results=5, excluded=used)
+    if len(moves) < 3:
         moves += generate_moves_for_lengths(
-            state, {3, 4}, limit_words=20, max_results=8,
+            state, {3, 4}, limit_words=15, max_results=5,
             excluded=used | {m["word"] for m in moves}
         )
-    return moves[:10]
+    return moves[:6]
 
 
 def choose_bot_move(state: GameState):
     if state.botLevel == "normal":
+        # Normal bot: just pick best scored move, no lookahead
         moves = generate_normal_moves(state)
-        return moves[0] if moves else None
-    # Strong bot: evaluate top 6 moves with shallow lookahead (capped for Render free tier)
-    legal_moves = generate_strong_moves(state)[:6]
+        if not moves:
+            return None
+        return max(moves, key=lambda m: (
+            m.get("territory_gain", 0) * 1.5 + word_score(m["word"])
+        ))
+    # Strong bot: evaluate top 5 moves, NO opponent lookahead (too slow on free tier)
+    legal_moves = generate_strong_moves(state)[:5]
     if not legal_moves:
         return None
     player = state.currentPlayer
@@ -634,18 +639,9 @@ def choose_bot_move(state: GameState):
         except Exception:
             continue
         my_value = evaluate_state_for_player(next_state, player)
-        opponent = other_player(player)
-        opp_best = 0
-        # Lookahead capped at 3 opponent moves (was 5)
-        for opp_move in generate_strong_moves(next_state)[:3]:
-            try:
-                opp_state = simulate_move(next_state, opp_move)
-                opp_best = max(opp_best, evaluate_state_for_player(opp_state, opponent))
-            except Exception:
-                continue
         last = next_state.moveHistory[-1]
         combo_bonus = len(last.comboLabels) * 3
-        value = my_value - (opp_best * 0.9) + word_score(move["word"]) * 1.4 + combo_bonus
+        value = my_value + word_score(move["word"]) * 1.4 + combo_bonus
         if value > best_value:
             best_value = value
             best_move = move
