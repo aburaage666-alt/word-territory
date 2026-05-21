@@ -241,6 +241,7 @@ export default function Home() {
 
   // Daily ③④
   const [dailyMode,   setDailyMode]   = useState(false);
+  const [bootMsg, setBootMsg]       = useState("Connecting to server…");
   const [dailyInfo,   setDailyInfo]   = useState(null);
   const [dailyResult, setDailyResult] = useState(null);
   const [shareText,   setShareText]   = useState("");
@@ -269,9 +270,23 @@ export default function Home() {
     setSubmitted(false); summaryFired.current = false;
   }
   async function boot(m = mode) {
-    const d = await createGame({ botLevel: m });
-    setGameId(d.game_id); setState(d.state); setDailyMode(false);
-    reset(); setSugg(await getSuggestions(d.game_id)); setAnimGen(0);
+    let lastErr;
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      try {
+        const d = await createGame({ botLevel: m });
+        setGameId(d.game_id); setState(d.state); setDailyMode(false);
+        reset(); setSugg(await getSuggestions(d.game_id)); setAnimGen(0);
+        setBootMsg("");
+        return;
+      } catch(e) {
+        lastErr = e;
+        if (attempt < 6) {
+          setBootMsg(`Server is waking up… (${attempt * 10}s)`);
+          await new Promise(r => setTimeout(r, 10000));
+        }
+      }
+    }
+    setBootMsg("Could not connect. Please refresh.");
   }
   async function bootDaily() {
     if (!dailyInfo) return;
@@ -453,7 +468,19 @@ export default function Home() {
                 -(a.territoryGained*2+a.wordScoreGained*1.5+a.lockedCellsGained*2+(a.captureCount?5:0)))
     .slice(0,3);
 
-  if (!state) return <main className="loading">Loading…</main>;
+  if (!state) return (
+    <main className="loading">
+      <div style={{background:"#fff",border:"1px solid #e0e0e0",borderRadius:18,padding:"40px 48px",textAlign:"center",maxWidth:380,width:"90%",boxShadow:"0 4px 24px rgba(0,0,0,.08)"}}>
+        <div style={{fontFamily:"\"Arial Black\",Arial",fontWeight:900,fontSize:24,letterSpacing:3,marginBottom:20}}>WORD TERRITORY</div>
+        <div style={{fontSize:15,fontWeight:700,color:"#333",marginBottom:8,minHeight:24}}>{bootMsg}</div>
+        <div style={{fontSize:12,color:"#999",marginBottom:20,lineHeight:1.6}}>Free server may take up to 60 seconds on first visit.</div>
+        <div style={{height:6,background:"#eee",borderRadius:999,overflow:"hidden"}}>
+          <div style={{height:"100%",background:"#111",borderRadius:999,animation:"loadpulse 1.8s ease-in-out infinite"}}/>
+        </div>
+      </div>
+      <style>{`@keyframes loadpulse{0%{width:10%}50%{width:75%}100%{width:10%}}`}</style>
+    </main>
+  );
 
   // ── render ────────────────────────────────────────────────────────────────
   return <>
