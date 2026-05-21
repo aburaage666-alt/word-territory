@@ -635,7 +635,7 @@ def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: 
                 path, visited = stack.pop()
                 plen = len(path)
 
-                if plen >= 3:
+                if plen >= 3 and (er, ec) in set(path):
                     for placed_letter in LETTERS:
                         word = letters_from_path(state, path, (er, ec), placed_letter)
                         if word and word in words and word not in excluded:
