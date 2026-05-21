@@ -601,50 +601,54 @@ def evaluate_state_for_player(state: GameState, player: str) -> float:
 
 def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: set) -> list[dict]:
     """
-    Fast path-first move finder for bot use on Render free tier.
+    Ultra-fast bot move finder for Render free tier.
 
-    Strategy: enumerate short paths from each placeable cell, then
-    check if the resulting letter sequence is a valid word.
-    This avoids the slow word→path search used by generate_moves_for_lengths.
-
-    Complexity: O(placeable_cells * 4^max_len) path enumeration,
-    with O(1) dictionary lookup per path — much faster on sparse boards.
+    Hard limits to guarantee sub-1s response:
+    - Max 4 placeable cells checked (random sample)
+    - Max path length 4 (even for strong bot)
+    - Stop immediately when max_results found
     """
+    import string, random
     words = get_words()
     results = []
-    placeable = get_placeable_empty_cells(state)
+    LETTERS = string.ascii_uppercase
 
-    import string
-    LETTERS = list(string.ascii_uppercase)
+    placeable = get_placeable_empty_cells(state)
+    # Hard cap: check at most 4 cells, chosen randomly for variety
+    if len(placeable) > 4:
+        placeable = random.sample(placeable, 4)
+
+    # Hard cap path length to 4 regardless of what caller requests
+    effective_len = min(max_len, 4)
 
     for (er, ec) in placeable:
-        # DFS to enumerate paths of length 3..max_len starting from placed cell
-        # and from its neighbours (placed letter can be anywhere)
         starts = [(er, ec)]
         for nr, nc in get_neighbors(er, ec):
             if state.board[nr][nc].letter:
                 starts.append((nr, nc))
+        # Max 3 starts per cell
+        starts = starts[:3]
 
         for start in starts:
-            stack = [([start], set([start]))]
+            stack = [([start], frozenset([start]))]
             while stack:
                 path, visited = stack.pop()
                 plen = len(path)
 
-                # Try every possible letter at the placed position
-                for placed_letter in LETTERS:
-                    word = letters_from_path(state, path, (er, ec), placed_letter)
-                    if word and len(word) >= 3 and word in words and word not in excluded:
-                        results.append({
-                            "row": er, "col": ec,
-                            "letter": placed_letter,
-                            "path": [Coord(row=r, col=c) for r, c in path],
-                            "word": word,
-                        })
-                        if len(results) >= max_results:
-                            return results
+                if plen >= 3:
+                    for placed_letter in LETTERS:
+                        word = letters_from_path(state, path, (er, ec), placed_letter)
+                        if word and word in words and word not in excluded:
+                            results.append({
+                                "row": er, "col": ec,
+                                "letter": placed_letter,
+                                "path": [Coord(row=r, col=c) for r, c in path],
+                                "word": word,
+                            })
+                            if len(results) >= max_results:
+                                return results
 
-                if plen >= max_len:
+                if plen >= effective_len:
                     continue
 
                 r, c = path[-1]
@@ -660,13 +664,12 @@ def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: 
 
 def generate_normal_moves(state: GameState) -> list[dict]:
     used = set(state.usedWords)
-    return _fast_bot_moves(state, max_len=4, max_results=8, excluded=used)
+    return _fast_bot_moves(state, max_len=4, max_results=5, excluded=used)
 
 
 def generate_strong_moves(state: GameState) -> list[dict]:
     used = set(state.usedWords)
-    moves = _fast_bot_moves(state, max_len=6, max_results=10, excluded=used)
-    return moves
+    return _fast_bot_moves(state, max_len=4, max_results=8, excluded=used)
 
 
 def choose_bot_move(state: GameState):
