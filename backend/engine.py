@@ -600,11 +600,13 @@ def evaluate_state_for_player(state: GameState, player: str) -> float:
 
 
 def generate_normal_moves(state: GameState) -> list[dict]:
-    # Bot excludes every word it has already played this game (prevents repetition)
+    # Render free tier: keep limits low for fast response
     used = set(state.usedWords)
-return generate_moves_for_lengths(state, {3, 4}, limit_words=30, max_results=10, excluded=used)
+    return generate_moves_for_lengths(state, {3, 4}, limit_words=30, max_results=10, excluded=used)
+
 
 def generate_strong_moves(state: GameState) -> list[dict]:
+    # Render free tier: cap candidates to avoid timeout
     used = set(state.usedWords)
     moves = generate_moves_for_lengths(state, {5, 6}, limit_words=20, max_results=8, excluded=used)
     if len(moves) < 5:
@@ -619,7 +621,9 @@ def choose_bot_move(state: GameState):
     if state.botLevel == "normal":
         moves = generate_normal_moves(state)
         return moves[0] if moves else None
-for opp_move in generate_strong_moves(next_state)[:3]:    if not legal_moves:
+    # Strong bot: evaluate top 6 moves with shallow lookahead (capped for Render free tier)
+    legal_moves = generate_strong_moves(state)[:6]
+    if not legal_moves:
         return None
     player = state.currentPlayer
     best_move = None
@@ -632,6 +636,7 @@ for opp_move in generate_strong_moves(next_state)[:3]:    if not legal_moves:
         my_value = evaluate_state_for_player(next_state, player)
         opponent = other_player(player)
         opp_best = 0
+        # Lookahead capped at 3 opponent moves (was 5)
         for opp_move in generate_strong_moves(next_state)[:3]:
             try:
                 opp_state = simulate_move(next_state, opp_move)
