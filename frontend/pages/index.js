@@ -301,7 +301,6 @@ export default function Home() {
   const [path,   setPath]       = useState([]);
   const [placed, setPlaced]     = useState(null);
   const [letter, setLetter]     = useState("");
-  const [hand,   setHand]       = useState([]);   // 5-card hand
   const [error,  setError]      = useState("");
   const [suggestions, setSugg]  = useState([]);
   const [mode,   setMode]       = useState("normal");
@@ -363,7 +362,7 @@ export default function Home() {
         const d = await createGame({ botLevel: m });
         setGameId(d.game_id); setState(d.state); setDailyMode(false);
         reset(); setAnimGen(0); setBootMsg("");
-        setHand(dealHand(5));
+
         // Suggestions are non-critical — don't let failure block game start
         getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
         return;
@@ -382,7 +381,7 @@ export default function Home() {
     const d = await createDailyGame();
     setGameId(d.game_id); setState(d.state); setDailyMode(true);
     reset(); setAnimGen(0);
-    setHand(dealHand(5));
+
     getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
   }
   useEffect(() => { boot().catch(e => setError(String(e))); }, []);
@@ -486,12 +485,12 @@ export default function Home() {
     return () => clearTimeout(h);
   }, [gameId, placed, letter, JSON.stringify(path)]);
 
-  // When a cell is placed: auto-select first vowel in hand (convenience)
+  // When a cell is placed: auto-select first vowel from draft
   useEffect(() => {
     if (placed) {
-      if (!letter && hand.length > 0) {
-        const vowel = hand.find(c => "AEIOU".includes(c));
-        if (vowel) setLetter(vowel);
+      if (!letter && state?.sharedDraft?.length > 0) {
+        const vowel = state.sharedDraft.find(c => "AEIOU".includes(c));
+        setLetter(vowel || state.sharedDraft[0] || "");
       }
       if (letterRef.current) letterRef.current.focus();
     }
@@ -619,11 +618,19 @@ export default function Home() {
   const refresh = async (id=gameId) => { try { setSugg(await getSuggestions(id)); } catch { setSugg([]); } };
   async function submit() {
     if (!placed) { setError("Tap a green square first."); return; }
-    if (!letter) { setError("Type one letter in the input box."); return; }
+    if (!letter) {
+      const draft = state?.sharedDraft || [];
+      setError(draft.length ? `Choose one of the ${draft.join("/")} tiles.` : "Choose a tile.");
+      return;
+    }
+    if (state?.sharedDraft?.length && !state.sharedDraft.includes(letter)) {
+      setError(`"${letter}" is not in the draft. Choose from: ${(state?.sharedDraft||[]).join(", ")}`);
+      return;
+    }
     try {
       const next = await submitMove({game_id:gameId,row:placed.row,col:placed.col,letter,path});
       setState(next);
-      setHand(h => replaceCard(h, letter));
+
       reset(); await refresh();
     } catch(e) { setError(e.message||"Move failed"); }
   }
@@ -633,7 +640,7 @@ export default function Home() {
     try {
       const next = await seedMove(gameId,{row:placed.row,col:placed.col,letter});
       setState(next);
-      setHand(h => replaceCard(h, letter));
+
       reset(); await refresh();
     } catch(e) { setError(e.message||"Seed failed"); }
   }
@@ -810,13 +817,13 @@ export default function Home() {
           {/* move controls */}
           <div className="mpanel">
             <div className="mrow">
-              <label className="mlbl">Your Hand</label>
-              {/* ── Hand tiles ── */}
+              <label className="mlbl">Draft <span className="draft-hint">(choose 1)</span></label>
+              {/* ── Draft tiles (設計案2: server-provided shared draft) ── */}
               <div className="hand-tiles">
-                {hand.map((tile, i) => (
+                {(state?.sharedDraft || []).map((tile, i) => (
                   <button
                     key={i}
-                    className={`htile ${letter===tile && hand.indexOf(tile)===i ? "htile-sel" : ""} ${!human() ? "htile-dim" : ""}`}
+                    className={`htile ${letter===tile ? "htile-sel" : ""} ${!human() ? "htile-dim" : ""}`}
                     onClick={() => {
                       if (!human()) return;
                       setLetter(tile);
@@ -1083,7 +1090,8 @@ export default function Home() {
       .mpanel{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px}
       .mrow{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px}
       .mlbl{font-size:12px;color:#888;white-space:nowrap;padding-top:14px}
-      /* ── Hand tiles ── */
+      /* ── Draft tiles ── */
+      .draft-hint{font-size:10px;color:#999;font-weight:400}
       .hand-tiles{display:flex;gap:6px;flex-wrap:nowrap}
       .htile{
         width:46px;height:52px;border:2px solid #ccc;border-radius:11px;
