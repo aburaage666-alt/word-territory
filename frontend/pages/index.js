@@ -55,11 +55,13 @@ function updateStreak(dateStr) {
 }
 
 // ── Cell ──────────────────────────────────────────────────────────────────────
-function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, onClick }) {
+function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, attack, inPath, onClick }) {
   const cls = ["cell",
     cell.owner === "RED" ? "cr" : cell.owner === "BLUE" ? "cb" : "",
     cell.locked ? "lk" : "", sel ? "sl" : "", placed ? "pl" : "",
     legal ? "lg" : "", disabled && !sel ? "dm" : "",
+    attack ? "atk" : "",   // opponent cell that can be attacked
+    inPath ? "inpath" : "", // opponent cell currently in selected path (will be captured)
   ].filter(Boolean).join(" ");
   return (
     <button className={cls} onClick={onClick} disabled={disabled}
@@ -67,6 +69,7 @@ function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled
       data-cap={captured ? gen : null}
       data-lk={lockedNow ? gen : null}>
       {cell.letter || ""}
+      {attack && !inPath && <span className="atk-dot"/>}
     </button>
   );
 }
@@ -393,6 +396,39 @@ export default function Home() {
   // ── board helpers ────────────────────────────────────────────────────────
   const human = () => state && !thinking && !state.winner && state.currentPlayer !== state.botPlayer;
   const isSel = (r,c) => path.some(p => p.row===r && p.col===c);
+
+  // Opponent cells adjacent to any placeable empty cell = attackable
+  const opponent = state?.currentPlayer === "RED" ? "BLUE" : "RED";
+  const attackableSet = useMemo(() => {
+    if (!state || !human()) return new Set();
+    const s = new Set();
+    for (let r = 0; r < 11; r++) {
+      for (let c = 0; c < 11; c++) {
+        const cell = state.board[r][c];
+        if (cell.letter && cell.owner === opponent && !cell.locked) {
+          // Check if any neighbour is a placeable empty cell
+          for (const [nr, nc] of [[r-1,c],[r+1,c],[r,c-1],[r,c+1]]) {
+            if (nr>=0&&nr<11&&nc>=0&&nc<11&&!state.board[nr][nc].letter) {
+              s.add(asKey(r,c));
+              break;
+            }
+          }
+        }
+      }
+    }
+    return s;
+  }, [state?.turn, state?.currentPlayer]);
+
+  // Opponent cells currently in the selected path (will be captured if submitted)
+  const inPathOpponentSet = useMemo(() => {
+    if (!path.length) return new Set();
+    const s = new Set();
+    path.forEach(p => {
+      const cell = state?.board[p.row][p.col];
+      if (cell?.owner === opponent) s.add(asKey(p.row, p.col));
+    });
+    return s;
+  }, [path, state?.turn]);
   const hasNbr = (r,c) => {
     const b = state.board;
     return (r>0&&b[r-1][c].letter)||(r<10&&b[r+1][c].letter)||(c>0&&b[r][c-1].letter)||(c<10&&b[r][c+1].letter);
@@ -642,6 +678,8 @@ export default function Home() {
                   legal={!placed&&isLegal(cell.row,cell.col)}
                   changed={changedS.has(k)} captured={capturedS.has(k)} lockedNow={lockedS.has(k)}
                   disabled={isDim(cell.row,cell.col)} gen={animGen}
+                  attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
+                  inPath={inPathOpponentSet.has(k)}
                   onClick={()=>clickCell(cell.row,cell.col)}/>;
               }))}
             </div>
@@ -663,7 +701,7 @@ export default function Home() {
                         {preview.isInDictionary?"✓ Valid":"Not in dictionary"}
                         {" · "}+{preview.wordScore}pts · +{preview.territoryGain}T
                         {preview.lockGain>0&&` · 🔒${preview.lockGain}`}
-                        {preview.captureHappened&&" · CAPTURE"}
+                        {preview.captureHappened&&<span className="pvcap"> ⚔ CAPTURE +{preview.captureCount||1}</span>}
                       </div>
                       {preview.comboLabels?.length>0&&<div className="chips">{preview.comboLabels.map(x=><span key={x} className="chip combo">{x}</span>)}</div>}
                     </>
@@ -864,6 +902,13 @@ export default function Home() {
       .cell[data-chg]{animation:aclaim 500ms ease forwards}
       .cell[data-cap]{animation:acap 800ms ease forwards}
       .cell[data-lk]{animation:alk 600ms ease forwards}
+      /* attack highlighting */
+      .cell{position:relative}
+      .cell.atk{box-shadow:inset 0 0 0 2px rgba(255,140,0,.8);background:rgba(255,140,0,.06)}
+      .cell.inpath{box-shadow:inset 0 0 0 3px #e65c00 !important;background:rgba(255,100,0,.25) !important;animation:ainpath .5s ease infinite alternate}
+      .atk-dot{position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:rgba(255,140,0,.9);pointer-events:none}
+      .pvcap{color:#e65c00;font-weight:800;font-size:13px}
+      @keyframes ainpath{0%{box-shadow:inset 0 0 0 3px #e65c00}100%{box-shadow:inset 0 0 0 3px #ff8c00}}
       @keyframes aclaim{0%{transform:scale(1.12)}100%{transform:scale(1)}}
       @keyframes acap{0%,30%{background:#ffe040}100%{}}
       @keyframes alk{0%{box-shadow:0 0 0 6px #111 inset}50%{box-shadow:0 0 0 2px #111 inset}100%{}}
