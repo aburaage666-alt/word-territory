@@ -434,7 +434,8 @@ export default function Home() {
   }, [path, state?.turn]);
   const hasNbr = (r,c) => {
     const b = state.board;
-    return (r>0&&b[r-1][c].letter)||(r<10&&b[r+1][c].letter)||(c>0&&b[r][c-1].letter)||(c<10&&b[r][c+1].letter);
+    const BS = b.length - 1;  // dynamic board size (6 for 7x7)
+    return (r>0&&b[r-1][c].letter)||(r<BS&&b[r+1][c].letter)||(c>0&&b[r][c-1].letter)||(c<BS&&b[r][c+1].letter);
   };
   const isLegal = (r,c) => state && !state.board[r][c].letter && hasNbr(r,c);
   const isDim = (r,c) => {
