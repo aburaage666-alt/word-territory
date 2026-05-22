@@ -1,7 +1,42 @@
+import json
+import sqlite3
 import uuid
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+
+# ── SQLite persistence ────────────────────────────────────────────────────────
+DB_PATH = Path(__file__).parent / "data.db"
+
+def get_db():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date_str TEXT NOT NULL,
+                nickname TEXT NOT NULL,
+                score REAL NOT NULL,
+                won INTEGER NOT NULL,
+                turns INTEGER NOT NULL,
+                submitted_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS waitlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                submitted_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.commit()
+
+init_db()
 
 from datetime import datetime, timezone
 from daily import date_to_day_number, date_to_opening_idx, get_today_utc
@@ -34,7 +69,10 @@ app = FastAPI(title="Word Territory API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://word-territory1.onrender.com",
+        "http://localhost:3000",   # local dev
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -208,26 +246,24 @@ def submit_daily_score(payload: DailyScoreSubmission):
     Production TODO: add IP-based rate limiting and persistence.
     """
     date_str = get_today_utc()
-    if date_str not in DAILY_SCORES:
-        DAILY_SCORES[date_str] = []
-
-    # Sanitise nickname: printable ASCII only, max 20 chars
     raw = payload.nickname.strip()
-    nickname = "".join(c for c in raw if c.isprintable() and c not in "<>&\"'")[:20] or "Anonymous"
+    nickname = "".join(c for c in raw if c.isprintable() and c not in set("<>&\'\""))[:20] or "Anonymous"
+    score = round(payload.redScore, 1)
 
-    entry = {
-        "nickname": nickname,
-        "score": round(payload.redScore, 1),
-        "won": payload.won,
-        "turns": int(payload.turns),
-        "submittedAt": datetime.now(timezone.utc).isoformat(),
-    }
-    DAILY_SCORES[date_str].append(entry)
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO daily_scores (date_str, nickname, score, won, turns) VALUES (?,?,?,?,?)",
+            (date_str, nickname, score, int(payload.won), int(payload.turns))
+        )
+        conn.commit()
+        rows = conn.execute(
+            "SELECT score FROM daily_scores WHERE date_str=? ORDER BY score DESC",
+            (date_str,)
+        ).fetchall()
 
-    sorted_scores = sorted(DAILY_SCORES[date_str], key=lambda x: -x["score"])
-    rank = next((i + 1 for i, e in enumerate(sorted_scores) if e is entry), len(sorted_scores))
-
-    return {"success": True, "rank": rank, "totalPlayers": len(sorted_scores)}
+    total = len(rows)
+    rank = next((i + 1 for i, r in enumerate(rows) if r["score"] <= score), total)
+    return {"success": True, "rank": rank, "totalPlayers": total}
 
 
 @app.get("/daily/leaderboard", response_model=DailyLeaderboardResponse)
@@ -237,25 +273,25 @@ def get_daily_leaderboard():
     idx = date_to_opening_idx(date_str)
     probe = build_initial_state(bot_level="strong", opening_idx=idx)
 
-    raw = DAILY_SCORES.get(date_str, [])
-    sorted_raw = sorted(raw, key=lambda x: -x["score"])[:50]
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT nickname, score, won, turns FROM daily_scores WHERE date_str=? ORDER BY score DESC LIMIT 50",
+            (date_str,)
+        ).fetchall()
+        total = conn.execute(
+            "SELECT COUNT(*) FROM daily_scores WHERE date_str=?", (date_str,)
+        ).fetchone()[0]
 
     entries = [
-        LeaderboardEntry(
-            rank=i + 1,
-            nickname=e["nickname"],
-            score=e["score"],
-            won=e["won"],
-            turns=e["turns"],
-        )
-        for i, e in enumerate(sorted_raw)
+        LeaderboardEntry(rank=i+1, nickname=r["nickname"], score=r["score"], won=bool(r["won"]), turns=r["turns"])
+        for i, r in enumerate(rows)
     ]
 
     return DailyLeaderboardResponse(
         dateStr=date_str,
         dayNumber=date_to_day_number(date_str),
         openingName=probe.openingName,
-        totalPlayers=len(raw),
+        totalPlayers=total,
         entries=entries,
     )
 
@@ -263,7 +299,7 @@ def get_daily_leaderboard():
 # ── Premium Waitlist ③⑤ ──────────────────────────────────────────────────────
 
 # In-memory waitlist. In production: write to a database or send to Mailchimp/ConvertKit.
-WAITLIST: list[str] = []
+# Waitlist stored in SQLite — see init_db() above
 
 
 @app.post("/waitlist")
@@ -283,10 +319,15 @@ def join_waitlist(payload: WaitlistSubmission):
         return {"success": False, "error": "Invalid email"}
 
     # Deduplicate in-memory
-    if raw not in WAITLIST:
-        WAITLIST.append(raw)
+    try:
+        with get_db() as conn:
+            conn.execute("INSERT OR IGNORE INTO waitlist (email) VALUES (?)", (raw,))
+            conn.commit()
+            pos = conn.execute("SELECT COUNT(*) FROM waitlist WHERE email <= ?", (raw,)).fetchone()[0]
+    except Exception:
+        pos = 1
 
-    return {"success": True, "position": WAITLIST.index(raw) + 1}
+    return {"success": True, "position": pos}
 
 
 @app.get("/waitlist/count")
