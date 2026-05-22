@@ -271,7 +271,7 @@ export default function Home() {
   }
   async function boot(m = mode) {
     let lastErr;
-    for (let attempt = 1; attempt <= 6; attempt++) {
+    for (let attempt = 1; attempt <= 9; attempt++) {
       try {
         const d = await createGame({ botLevel: m });
         setGameId(d.game_id); setState(d.state); setDailyMode(false);
@@ -281,7 +281,7 @@ export default function Home() {
       } catch(e) {
         lastErr = e;
         if (attempt < 6) {
-          setBootMsg(`Server is waking up… (${attempt * 10}s)`);
+          setBootMsg(`Server is waking up… (${attempt * 10}s / 90s)`);
           await new Promise(r => setTimeout(r, 10000));
         }
       }
