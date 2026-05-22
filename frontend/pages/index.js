@@ -254,9 +254,13 @@ export default function Home() {
   const [nickname,    setNickname]    = useState("");
   const [myRank,      setMyRank]      = useState(null);
   const [submitted,   setSubmitted]   = useState(false);
+  // Tutorial UX: track how many turns have been played
+  const tutTurns = (state?.moveHistory?.length || 0);
+  const isTutorial = tutTurns < 3;  // first 3 turns = beginner mode
   const [streak,      setStreak]      = useState(0);
 
   const summaryFired = useRef(false);
+  const letterRef   = useRef(null);
   const histRef      = useRef(null);
 
   // ── mount ────────────────────────────────────────────────────────────────
@@ -397,6 +401,11 @@ export default function Home() {
     }, 180);
     return () => clearTimeout(h);
   }, [gameId, placed, letter, JSON.stringify(path)]);
+
+  // Auto-focus letter input when a cell is placed
+  useEffect(() => {
+    if (placed && letterRef.current) letterRef.current.focus();
+  }, [placed]);
 
   // ── board helpers ────────────────────────────────────────────────────────
   const human = () => state && !thinking && !state.winner && state.currentPlayer !== state.botPlayer;
@@ -630,7 +639,7 @@ export default function Home() {
           )}
           <button className="bsm" onClick={()=>setRules(v=>!v)}>{showRules?"✕ Rules":"? Rules"}</button>
           <Link href="/about" className="bsm" style={{textDecoration:"none",color:"#111"}}>About</Link>
-          <button className="bsm prem-btn" onClick={()=>setPremium(true)}>✦ Premium</button>
+          {!isTutorial && <button className="bsm prem-btn" onClick={()=>setPremium(true)}>✦ Premium</button>}
           {dailyMode
             ?<button className="bprim" onClick={()=>boot(mode)}>← Free Play</button>
             :<button className="bprim" onClick={()=>boot(mode)}>New Game</button>
@@ -638,11 +647,22 @@ export default function Home() {
         </div>
       </div>
 
+      {/* ── First-move guide ── */}
+      {tutTurns === 0 && human() && (
+        <div className="firstmove-banner">
+          <strong>How to play:</strong>{" "}
+          Tap a <span className="fm-green">green square</span> → type a letter → connect letters to make a word → press <strong>Capture Word</strong>
+        </div>
+      )}
       {/* ── score bar ── */}
       <div className="sbar">
         <div className="srow">
           <span className="stxt red-t">🔴 {redT} cells</span>
-          <span className="smid">{redT===blueT?"Tied":`${redT>blueT?"🔴 RED":"🔵 BLUE"} +${Math.abs(redT-blueT)}`}</span>
+          <span className="smid">
+            {isTutorial
+              ? "Goal: more red cells than blue"
+              : redT===blueT ? "Tied" : `${redT>blueT?"🔴 RED":"🔵 BLUE"} +${Math.abs(redT-blueT)}`}
+          </span>
           <span className="stxt blue-t">{blueT} cells 🔵</span>
         </div>
         <div className="bar"><div className="br" style={{width:`${pct}%`}}/><div className="bb" style={{width:`${100-pct}%`}}/></div>
@@ -695,7 +715,7 @@ export default function Home() {
           <div className="mpanel">
             <div className="mrow">
               <label className="mlbl">Letter</label>
-              <input className="minput" value={letter} maxLength={1} disabled={!human()}
+              <input ref={letterRef} className="minput" value={letter} maxLength={1} disabled={!human()}
                 onChange={e=>setLetter(e.target.value.toUpperCase().slice(0,1))} placeholder="A"/>
               <div className={`pvbox ${ok?"pvok":""}`}>
                 <div className="pvword">{currentWord||"—"}</div>
@@ -713,16 +733,24 @@ export default function Home() {
                     </>
                 ):(
                   <div className="pvhint">
-                    {!placed?"① Type letter  ② Tap any cell in word  ③ Select path  ④ Submit":!letter?"Type a letter":!incPlaced?"Path needs your letter":"Select path"}
+                    {!placed
+                      ? "Tap a green square to place your letter."
+                      : !letter
+                      ? "Type one letter for this square."
+                      : path.length < 2
+                      ? "Now tap connected letters to make a word."
+                      : !incPlaced
+                      ? "Path must include your placed letter."
+                      : "Keep connecting — need 3–6 letters total."}
                   </div>
                 )}
               </div>
             </div>
             <div className="btns">
-              <button className="ba bsubmit" onClick={submit} disabled={!human()}>Submit</button>
-              <button className="ba bseed"   onClick={seed}   disabled={!human()}>Seed</button>
-              <button className="ba"          onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
-              <button className="ba"          onClick={pass}   disabled={!human()}>Pass</button>
+              <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word" : "Submit"}</button>
+              {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()}>Seed</button>}
+              <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
+              {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
             </div>
           </div>
         </div>
@@ -908,6 +936,12 @@ export default function Home() {
       .cell[data-chg]{animation:aclaim 500ms ease forwards}
       .cell[data-cap]{animation:acap 800ms ease forwards}
       .cell[data-lk]{animation:alk 600ms ease forwards}
+      /* first-move banner */
+      .firstmove-banner{background:#fffde7;border:2px solid #f5d000;border-radius:12px;padding:10px 16px;margin-bottom:10px;font-size:13px;line-height:1.6}
+      .fm-green{background:#d4edda;color:#155724;padding:1px 5px;border-radius:4px;font-weight:700}
+      /* valid word hint */
+      .pvok-hint{color:#1a7a3c;font-weight:700;font-size:13px;margin-bottom:4px}
+
       /* attack highlighting */
       .cell{position:relative}
       .cell.atk{box-shadow:inset 0 0 0 2px rgba(255,140,0,.8);background:rgba(255,140,0,.06)}
