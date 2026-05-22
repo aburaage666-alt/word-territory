@@ -137,7 +137,7 @@ function updateStreak(dateStr) {
 function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, attack, inPath, onClick }) {
   const cls = ["cell",
     cell.owner === "RED" ? "cr" : cell.owner === "BLUE" ? "cb" : "",
-    cell.locked ? "lk" : "", sel ? "sl" : "", placed ? "pl" : "",
+    cell.fortified ? "ft" : "", sel ? "sl" : "", placed ? "pl" : "",
     legal ? "lg" : "", disabled && !sel ? "dm" : "",
     attack ? "atk" : "",   // opponent cell that can be attacked
     inPath ? "inpath" : "", // opponent cell currently in selected path (will be captured)
@@ -159,7 +159,7 @@ function HistItem({ m }) {
     <div className="hi">
       <div className="hi-head"><strong>T{m.turn} {m.player}</strong><span className="hiw">{m.word}</span></div>
       {m.moveType === "WORD" && (
-        <div className="hi-stats">+{m.territoryGained}T +{m.wordScoreGained}W 🔒{m.lockedCellsGained}{m.captureCount > 0 ? ` ✦${m.captureCount}cap` : ""}</div>
+        <div className="hi-stats">+{m.territoryGained}T +{m.wordScoreGained}W 🔒{m.fortifiedCellsGained}{m.captureCount > 0 ? ` ✦${m.captureCount}cap` : ""}</div>
       )}
       {m.comboLabels?.length > 0 && <div className="chips">{m.comboLabels.map(x => <span key={x} className="chip combo">{x}</span>)}</div>}
     </div>
@@ -433,8 +433,8 @@ export default function Home() {
     if (dailyMode && dailyInfo) {
       const wm = state.moveHistory.filter(m => m.moveType === "WORD");
       const best = [...wm].sort((a, b) =>
-        (b.territoryGained*2 + b.wordScoreGained*1.5 + b.lockedCellsGained*2 + (b.captureCount?5:0)) -
-        (a.territoryGained*2 + a.wordScoreGained*1.5 + a.lockedCellsGained*2 + (a.captureCount?5:0))
+        (b.territoryGained*2 + b.wordScoreGained*1.5 + b.fortifiedCellsGained*2 + (b.captureCount?5:0)) -
+        (a.territoryGained*2 + a.wordScoreGained*1.5 + a.fortifiedCellsGained*2 + (a.captureCount?5:0))
       )[0];
       const totalCells = 7 * 7;
       const redCells = tScore(state, "RED");
@@ -509,7 +509,7 @@ export default function Home() {
     for (let r = 0; r < BS; r++) {
       for (let c = 0; c < BS; c++) {
         const cell = state.board[r][c];
-        if (cell.letter && cell.owner === opponent && !cell.locked) {
+        if (cell.letter && cell.owner === opponent && !cell.fortified) {
           for (const [nr, nc] of [[r-1,c],[r+1,c],[r,c-1],[r,c+1]]) {
             if (nr>=0&&nr<BS&&nc>=0&&nc<BS&&!state.board[nr][nc].letter) {
               s.add(asKey(r,c));
@@ -642,7 +642,7 @@ export default function Home() {
       setState(next);
 
       reset(); await refresh();
-    } catch(e) { setError(e.message||"Seed failed"); }
+    } catch(e) { setError(e.message||"Draw failed"); }
   }
   async function pass() {
     try { const next = await passTurn(gameId); setState(next); reset(); await refresh(); }
@@ -669,14 +669,14 @@ export default function Home() {
   // ── derived ──────────────────────────────────────────────────────────────
   const changedS  = new Set((state?.lastChangedCells||[]).map(c=>asKey(c.row,c.col)));
   const capturedS = new Set((state?.lastCapturedCells||[]).map(c=>asKey(c.row,c.col)));
-  const lockedS   = new Set((state?.lastLockedCells  ||[]).map(c=>asKey(c.row,c.col)));
+  const lockedS   = new Set((state?.lastFortifiedCells  ||[]).map(c=>asKey(c.row,c.col)));
   const redT = tScore(state,"RED"), blueT = tScore(state,"BLUE");
   const pct  = Math.round((redT / Math.max(redT+blueT,1)) * 100);
   const incPlaced = placed && path.some(p=>p.row===placed.row&&p.col===placed.col);
   const ok = preview?.isInDictionary && preview?.includesPlacedCell;
   const topMoves = [...(state?.moveHistory||[])].filter(m=>m.moveType==="WORD")
-    .sort((a,b)=>(b.territoryGained*2+b.wordScoreGained*1.5+b.lockedCellsGained*2+(b.captureCount?5:0))
-                -(a.territoryGained*2+a.wordScoreGained*1.5+a.lockedCellsGained*2+(a.captureCount?5:0)))
+    .sort((a,b)=>(b.territoryGained*2+b.wordScoreGained*1.5+b.fortifiedCellsGained*2+(b.captureCount?5:0))
+                -(a.territoryGained*2+a.wordScoreGained*1.5+a.fortifiedCellsGained*2+(a.captureCount?5:0)))
     .slice(0,3);
 
   if (!state) return (
@@ -774,16 +774,16 @@ export default function Home() {
       {/* ── rules ── */}
       {showRules&&(
         <div className="rules">
-          <strong>Word Territory is a spatial strategy game — not just a word game.</strong>
+          <strong>Build words from a shared draft. Place letters. Capture territory.</strong>
           <ol>
-            <li>Tap a <em>green cell</em> next to existing letters, type one letter to place it.</li>
-            <li>Select a connected path of letters. <strong>Your placed letter can be anywhere in the path</strong> — beginning, middle, or end.</li>
-            <li>Example: board has D–S–T, you place U next to D → select D→U→S→T to form DUST.</li>
-            <li>Submit a valid 3–6 letter word → claim the entire path as territory.</li>
-            <li>Enclosed regions are <strong>captured</strong>. Fully-surrounded groups become <strong>locked</strong> (bold border).</li>
-            <li><strong>Seed Move</strong> — place a letter without scoring if stuck.</li>
-            <li>Score = Territory × 1.5 + Word Points. Shape the board, not just the words.</li>
-            <li><strong>Daily Challenge</strong> — same board for everyone each day. One attempt. Strong bot only.</li>
+            <li><strong>Draft:</strong> Each turn, 6 tiles appear. Pick one tile — the bot picks from the same 6.</li>
+            <li>Tap a <em>green square</em> to place your tile. Your tile can appear anywhere in the word path.</li>
+            <li>Connect letters to make a 3–6 letter word → press <strong>Capture Word</strong> to claim the path.</li>
+            <li>Example: board has D–S–T, place U → select D→U→S→T → DUST!</li>
+            <li>Enclose opponent cells to <strong>capture</strong> them. Fully-surrounded own cells become 🏰 <strong>Fortified</strong>.</li>
+            <li><strong>Draw</strong> — place a tile without a word if stuck. Combos: BRIDGE · CUT · CAPTURE · SWING MOVE.</li>
+            <li><strong>Goal:</strong> More red cells than blue wins. Territory beats vocabulary.</li>
+            <li><strong>Daily Challenge</strong> — same draft seed worldwide each day. One attempt. Strong bot.</li>
           </ol>
         </div>
       )}
@@ -875,7 +875,7 @@ export default function Home() {
             </div>
             <div className="btns">
               <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word" : "Submit"}</button>
-              {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()}>Seed</button>}
+              {!isTutorial && <button className="ba bdraw" onClick={seed} disabled={!human()}>Draw</button>}
               <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
               {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
             </div>
@@ -1054,7 +1054,7 @@ export default function Home() {
       .cell{width:44px;height:44px;border:1.5px solid #c8c8c8;border-radius:9px;background:#fafafa;font-size:17px;font-weight:800;cursor:pointer;transition:background .12s}
       .cell.cr{background:rgba(192,57,43,.15);border-color:rgba(192,57,43,.3)}
       .cell.cb{background:rgba(34,113,179,.15);border-color:rgba(34,113,179,.3)}
-      .cell.lk{border-width:3px;border-color:#111}
+      .cell.ft{border-width:3px;border-color:#111}
       .cell.sl{outline:3px solid #f0a500;outline-offset:-2px}
       .cell.pl{box-shadow:inset 0 0 0 3px #111}
       .cell.lg{background:#e8fce8;border-color:#5cb85c}
@@ -1123,7 +1123,7 @@ export default function Home() {
       .ba:disabled{opacity:.4;cursor:not-allowed}
       .bsubmit{background:#111!important;color:#fff;border-color:#111!important}
       .bsubmit:hover:not(:disabled){background:#333!important}
-      .bseed{background:#fffff0;border-color:#d4c000}
+      .bdraw{background:#fffff0;border-color:#d4c000}
 
       /* side panel */
       .scol{display:flex;flex-direction:column;gap:10px}
@@ -1200,7 +1200,7 @@ export default function Home() {
       .prem-tier.premium{background:#d4af37;color:#111}
       .prem-col ul{list-style:none;padding:0}
       .prem-col li{font-size:13px;padding:4px 0;border-bottom:1px solid rgba(0,0,0,.05)}
-      .locked-feat{color:#aaa;text-decoration:line-through}
+      .fortified-feat{color:#aaa;text-decoration:line-through}
       .prem-price{font-size:24px;font-weight:900;margin-top:12px;color:#111}
       .prem-price span{font-size:14px;font-weight:400;color:#666}
       .prem-price-annual{font-size:12px;color:#888;margin-bottom:10px}
