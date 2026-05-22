@@ -401,19 +401,49 @@ export default function Home() {
   const isDim   = (r,c) => {
     if (!state || !human()) return true;
     const cell = state.board[r][c];
-    if (!placed) return !!cell.letter || !isLegal(r,c);
+    if (!placed && path.length === 0) {
+      // Before any tap: highlight green cells AND adjacent existing letters
+      return !isLegal(r,c) && !(cell.letter && hasNbr(r,c));
+    }
     if (isSel(r,c)) return true;
     if (path.length>0 && !adj(path[path.length-1],{row:r,col:c})) return true;
+    // If placed not yet set, allow green cells in path
+    if (!placed) return !cell.letter && !isLegal(r,c);
     if (!cell.letter && !(placed.row===r && placed.col===c)) return true;
     return false;
   };
   function clickCell(r,c) {
     if (!state || !human()) return;
+    const cell = state.board[r][c];
+
     if (!placed) {
-      if (!isLegal(r,c)) { setError("Tap a green cell next to existing letters"); return; }
-      setPlaced({row:r,col:c}); setPath([{row:r,col:c}]); setError(""); return;
+      if (isLegal(r,c)) {
+        // Tap green cell first: set as placed, start path here
+        setPlaced({row:r,col:c}); setPath([{row:r,col:c}]); setError(""); return;
+      }
+      if (cell.letter && hasNbr(r,c)) {
+        // Tap existing letter first: start path here, placed cell comes later
+        setPath([{row:r,col:c}]); setError(""); return;
+      }
+      setError("Tap a green cell or an existing letter to start"); return;
     }
-    if (isDim(r,c)) return;
+
+    // placed is set — or path has started without placed yet
+    if (placed && isSel(r,c)) return; // already selected
+    if (path.length > 0) {
+      const last = path[path.length-1];
+      if (!adj(last,{row:r,col:c})) return; // not adjacent
+    }
+
+    if (!placed && isLegal(r,c)) {
+      // User tapped green cell after starting from existing letter → set as placed
+      setPlaced({row:r,col:c});
+      setPath(prev => [...prev, {row:r,col:c}]);
+      setError(""); return;
+    }
+
+    if (!cell.letter && !(placed && placed.row===r && placed.col===c)) return;
+    if (isSel(r,c)) return;
     setPath(prev => [...prev, {row:r,col:c}]);
   }
 
@@ -612,7 +642,7 @@ export default function Home() {
                     </>
                 ):(
                   <div className="pvhint">
-                    {!placed?"① Tap green cell  ② Type letter  ③ Select path  ④ Submit":!letter?"Type a letter":!incPlaced?"Path needs your letter":"Select path"}
+                    {!placed?"① Type letter  ② Tap any cell in word  ③ Select path  ④ Submit":!letter?"Type a letter":!incPlaced?"Path needs your letter":"Select path"}
                   </div>
                 )}
               </div>
