@@ -5,8 +5,8 @@ from copy import deepcopy
 from dictionary import get_words, is_valid_word
 from models import Cell, Coord, GameState, MoveHistoryItem, PreviewMoveResponse, Scores
 
-BOARD_SIZE = 11
-MAX_TURNS = 50
+BOARD_SIZE = 7
+MAX_TURNS = 35
 
 OPENINGS = [
     ("STONE OPENING", ["T", "A", "O", "E", "R", "N", "S"]),
@@ -21,7 +21,8 @@ OPENINGS = [
     ("CIRCLE OPENING", ["S", "T", "O", "N", "E", "R", "A"]),
 ]
 
-OPENING_COORDS = [(4, 5), (5, 4), (5, 5), (5, 6), (5, 7), (6, 5), (7, 5)]
+# 7x7 center=(3,3): shape top(1,3), row2(2,2-5), col(3-4,3)
+OPENING_COORDS = [(1, 3), (2, 2), (2, 3), (2, 4), (2, 5), (3, 3), (4, 3)]
 
 
 def in_bounds(r: int, c: int) -> bool:
@@ -246,8 +247,8 @@ def apply_captures(state: GameState, player: str):
             if not touches_edge:
                 for rr, cc in region:
                     target = state.board[rr][cc]
-                    if not target.locked or target.owner == player:
-                        target.owner = player
+                    # 案4: locked cells can be captured when surrounded
+                    target.owner = player
 
 
 def recalc_scores(state: GameState, current_player_for_word_score: str | None = None, last_word: str | None = None):
@@ -459,12 +460,14 @@ def is_game_over(state: GameState) -> bool:
 
 
 def decide_winner(state: GameState):
-    red = total_score(state, "RED")
-    blue = total_score(state, "BLUE")
-    if red > blue:
-        return "RED"
-    if blue > red:
-        return "BLUE"
+    # 案4: territory count is primary (Othello-style)
+    red_t = count_territory(state, "RED")
+    blue_t = count_territory(state, "BLUE")
+    if red_t != blue_t:
+        return "RED" if red_t > blue_t else "BLUE"
+    # Tiebreak: word score
+    if state.scores.redWord != state.scores.blueWord:
+        return "RED" if state.scores.redWord > state.scores.blueWord else "BLUE"
     return None
 
 
