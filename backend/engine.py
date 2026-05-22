@@ -56,7 +56,7 @@ LETTER_POOL = (
 VOWELS_SET = set("AEIOU")
 
 
-def deal_draft(n: int = 3) -> list[str]:
+def deal_draft(n: int = 6) -> list[str]:
     """Draw n letters from the pool, guaranteeing at least 1 vowel."""
     import random
     pool = list(LETTER_POOL)
@@ -118,14 +118,14 @@ def draft_for_bot(state, hand: list[str]) -> str:
 
 def init_draft(state) -> None:
     """Set initial draft and hands at game start."""
-    state.sharedDraft = deal_draft(3)
+    state.sharedDraft = deal_draft(6)
     state.redHand  = deal_hand(1)   # start with 1 — grows via draft
     state.blueHand = deal_hand(1)
 
 
 def advance_draft(state) -> None:
     """Issue a new 3-card draft for the upcoming turn pair."""
-    state.sharedDraft = deal_draft(3)
+    state.sharedDraft = deal_draft(6)
 
 
 def in_bounds(r: int, c: int) -> bool:
@@ -175,7 +175,7 @@ def count_territory(state: GameState, player: str) -> int:
 
 
 def count_locked_cells(state: GameState, player: str) -> int:
-    return sum(1 for row in state.board for cell in row if cell.owner == player and cell.locked)
+    return sum(1 for row in state.board for cell in row if cell.owner == player and cell.fortified)
 
 
 def choose_opening():
@@ -220,9 +220,9 @@ def build_initial_state(bot_level: str = "normal", opening_idx: int | None = Non
         openingName=opening_name,
         lastChangedCells=[],
         lastCapturedCells=[],
-        lastLockedCells=[],
+        lastFortifiedCells=[],
         lastComboLabels=[],
-        sharedDraft=deal_draft(3),
+        sharedDraft=deal_draft(6),
         redHand=[],
         blueHand=[],
     )
@@ -250,7 +250,7 @@ def find_candidate_words(state: GameState, limit: int = 15) -> list[str]:
 
 def snapshot(state: GameState):
     owners = {(cell.row, cell.col): cell.owner for row in state.board for cell in row}
-    locked = {(cell.row, cell.col): cell.locked for row in state.board for cell in row}
+    locked = {(cell.row, cell.col): cell.fortified for row in state.board for cell in row}
     red_total = total_score(state, "RED")
     blue_total = total_score(state, "BLUE")
     leader = "RED" if red_total > blue_total else "BLUE" if blue_total > red_total else "TIE"
@@ -322,7 +322,7 @@ def combo_labels(word: str, territory_gain: int, lock_gain: int,
     if territory_gain >= 6:
         labels.append("MEGA TERRITORY")
     if lock_gain >= 3:
-        labels.append("LOCK CHAIN")
+        labels.append("FORTIFY CHAIN")
     if capture_count >= 1:
         labels.append("CAPTURE")
     if capture_count >= 2:
@@ -349,7 +349,7 @@ def apply_locks(state: GameState):
         for c in range(BOARD_SIZE):
             cell = state.board[r][c]
             if cell.owner is None:
-                cell.locked = False
+                cell.fortified = False
                 continue
             owner = cell.owner
             all_same = True
@@ -359,7 +359,7 @@ def apply_locks(state: GameState):
                     break
             if r in (0, BOARD_SIZE - 1) or c in (0, BOARD_SIZE - 1):
                 all_same = False
-            cell.locked = all_same
+            cell.fortified = all_same
 
 
 def apply_captures(state: GameState, player: str):
@@ -466,7 +466,7 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     player = state.currentPlayer
     for p in path:
         cell = temp.board[p.row][p.col]
-        if not cell.locked or cell.owner == player:
+        if not cell.fortified or cell.owner == player:
             cell.owner = player
 
     apply_captures(temp, player)
@@ -487,7 +487,7 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
         path=[Coord(row=p.row, col=p.col) for p in path],
         wordScoreGained=word_score(word),
         territoryGained=delta["territory_gain"],
-        lockedCellsGained=len(delta["newly_locked"]),
+        fortifiedCellsGained=len(delta["newly_locked"]),
         captureCount=delta["capture_count"],
         comboLabels=combos,
         redTotalAfter=delta["red_total"],
@@ -500,7 +500,7 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     temp.recentMoves = [f"{player}: {word}{combo_suffix}"] + temp.recentMoves[:4]
     temp.lastChangedCells = delta["changed"]
     temp.lastCapturedCells = delta["captured"]
-    temp.lastLockedCells = delta["newly_locked"]
+    temp.lastFortifiedCells = delta["newly_locked"]
     temp.lastComboLabels = combos
     temp.currentPlayer = other_player(player)
     temp.turn += 1
@@ -531,13 +531,13 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str):
     temp.consecutivePasses = 0
     temp.lastChangedCells = [Coord(row=row, col=col)]
     temp.lastCapturedCells = []
-    temp.lastLockedCells = []
+    temp.lastFortifiedCells = []
     temp.lastComboLabels = []
     item = MoveHistoryItem(
         turn=state.turn,
         player=player,
-        word="SEED MOVE",
-        moveType="SEED",
+        word="DRAW",
+        moveType="DRAW",
         placedRow=row,
         placedCol=col,
         placedLetter=letter.upper(),
@@ -546,7 +546,7 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str):
         blueTotalAfter=total_score(temp, "BLUE"),
     )
     temp.moveHistory.append(item)
-    temp.recentMoves = [f"{player}: SEED MOVE ({letter.upper()})"] + temp.recentMoves[:4]
+    temp.recentMoves = [f"{player}: DRAW ({letter.upper()})"] + temp.recentMoves[:4]
     if is_game_over(temp):
         temp.winner = decide_winner(temp)
     advance_draft(temp)
@@ -564,7 +564,7 @@ def pass_turn(state: GameState):
     temp.recentMoves = [f"{current}: PASS"] + temp.recentMoves[:4]
     temp.lastChangedCells = []
     temp.lastCapturedCells = []
-    temp.lastLockedCells = []
+    temp.lastFortifiedCells = []
     temp.lastComboLabels = []
     if is_game_over(temp):
         temp.winner = decide_winner(temp)
@@ -588,7 +588,7 @@ def preview_move(state: GameState, row: int, col: int, letter: str, path) -> Pre
             after = validate_and_apply_move(clone_state(state), row, col, letter, path)
             last = after.moveHistory[-1]
             response.territoryGain = last.territoryGained
-            response.lockGain = last.lockedCellsGained
+            response.lockGain = last.fortifiedCellsGained
             response.captureHappened = last.captureCount > 0
             response.captureCount = last.captureCount
             response.comboLabels = last.comboLabels
