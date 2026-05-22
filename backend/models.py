@@ -15,7 +15,7 @@ class Cell(BaseModel):
     col: int
     letter: Optional[str] = None
     owner: Optional[Player] = None
-    locked: bool = False
+    fortified: bool = False
 
 
 class Scores(BaseModel):
@@ -36,7 +36,7 @@ class MoveHistoryItem(BaseModel):
     path: List[Coord] = []
     wordScoreGained: int = 0
     territoryGained: int = 0
-    lockedCellsGained: int = 0
+    fortifiedCellsGained: int = 0
     captureCount: int = 0
     comboLabels: List[str] = []
     redTotalAfter: float = 0
@@ -60,7 +60,7 @@ class GameState(BaseModel):
     openingName: str = ""
     lastChangedCells: List[Coord] = []
     lastCapturedCells: List[Coord] = []
-    lastLockedCells: List[Coord] = []
+    lastFortifiedCells: List[Coord] = []
     lastComboLabels: List[str] = []
     # ── Draft / Hand system (設計案2) ──────────────────────────────────────
     # sharedDraft: 3 letters revealed each turn — both players choose from these
