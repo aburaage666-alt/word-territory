@@ -26,17 +26,55 @@ const loadResult  = ds => { try { return JSON.parse(localStorage.getItem(LS_DAIL
 const saveResult  = (ds, r) => { try { localStorage.setItem(LS_DAILY + ds, JSON.stringify(r)); } catch {} };
 const isPremium   = () => { try { return localStorage.getItem(LS_PREM) === "true"; } catch { return false; } };
 
+// ── Rank system ─────────────────────────────────────────────────────────────
+function getRank(capturePct) {
+  if (capturePct >= 80) return "Territory Master";
+  if (capturePct >= 70) return "Commander";
+  if (capturePct >= 60) return "Strategist";
+  if (capturePct >= 50) return "Tactician";
+  if (capturePct >= 40) return "Defender";
+  return "Recruit";
+}
+
+function getRankEmoji(capturePct) {
+  if (capturePct >= 80) return "👑";
+  if (capturePct >= 70) return "⭐";
+  if (capturePct >= 60) return "🎯";
+  if (capturePct >= 50) return "🛡️";
+  if (capturePct >= 40) return "⚔️";
+  return "🔰";
+}
+
+// Wordle-style emoji board from final board state
+function buildEmojiBoard(board) {
+  if (!board) return "";
+  return board.map(row =>
+    row.map(cell => {
+      if (!cell.letter) return "⬜";
+      if (cell.owner === "RED") return "🟥";
+      if (cell.owner === "BLUE") return "🟦";
+      return "⬜";
+    }).join("")
+  ).join("\n");
+}
+
 function buildShare(num, ds, r) {
+  const totalCells = 49; // 7x7
+  const capturePct = Math.round((r.redScore / totalCells) * 100);
+  const rank = getRank(capturePct);
+  const rankEmoji = getRankEmoji(capturePct);
+  const result = r.winner === "RED" ? "WIN 🎉" : r.winner === null ? "DRAW 🤝" : "LOSS 😤";
+  const emojiBoard = r.emojiBoard || "";
+
   return [
     `Word Territory Daily #${num}`,
-    `${ds}  ·  ${r.openingName}`,
+    `${rankEmoji} ${rank} — ${capturePct}% captured`,
     ``,
-    `YOU (RED):  ${r.redScore} cells`,
-    `BOT (BLUE): ${r.blueScore} cells`,
+    result + `  ·  ${r.turns} turns`,
+    r.bestMove ? `Best word: ${r.bestMove}` : null,
     ``,
-    `${r.winner === "RED" ? "WIN" : r.winner === null ? "DRAW" : "LOSS"}  ·  ${r.turns} turns`,
-    r.bestMove ? `Best move: ${r.bestMove}` : null,
-    ``, `wordterritory.com`,
+    emojiBoard,
+    `word-territory1.onrender.com`,
   ].filter(l => l !== null).join("\n");
 }
 
@@ -358,11 +396,16 @@ export default function Home() {
         (b.territoryGained*2 + b.wordScoreGained*1.5 + b.lockedCellsGained*2 + (b.captureCount?5:0)) -
         (a.territoryGained*2 + a.wordScoreGained*1.5 + a.lockedCellsGained*2 + (a.captureCount?5:0))
       )[0];
+      const totalCells = 7 * 7;
+      const redCells = tScore(state, "RED");
+      const capturePct = Math.round((redCells / totalCells) * 100);
       const r = {
-        redScore: tScore(state, "RED"), blueScore: tScore(state, "BLUE"),
+        redScore: redCells, blueScore: tScore(state, "BLUE"),
         winner: state.winner, turns: state.turn - 1,
         bestMove: best ? `${best.word} (+${best.territoryGained}T)` : null,
         openingName: state.openingName,
+        capturePct,
+        emojiBoard: buildEmojiBoard(state.board),
       };
       saveResult(dailyInfo.dateStr, r);
       setDailyResult(r);
@@ -528,14 +571,16 @@ export default function Home() {
   // ── move actions ─────────────────────────────────────────────────────────
   const refresh = async (id=gameId) => { try { setSugg(await getSuggestions(id)); } catch { setSugg([]); } };
   async function submit() {
-    if (!placed||!letter) { setError("Choose a cell and type a letter"); return; }
+    if (!placed) { setError("Tap a green square first."); return; }
+    if (!letter) { setError("Type one letter in the input box."); return; }
     try {
       const next = await submitMove({game_id:gameId,row:placed.row,col:placed.col,letter,path});
       setState(next); reset(); await refresh();
     } catch(e) { setError(e.message||"Move failed"); }
   }
   async function seed() {
-    if (!placed||!letter) { setError("Choose a cell and type a letter"); return; }
+    if (!placed) { setError("Tap a green square first."); return; }
+    if (!letter) { setError("Type one letter in the input box."); return; }
     try {
       const next = await seedMove(gameId,{row:placed.row,col:placed.col,letter});
       setState(next); reset(); await refresh();
@@ -936,6 +981,12 @@ export default function Home() {
       .cell[data-chg]{animation:aclaim 500ms ease forwards}
       .cell[data-cap]{animation:acap 800ms ease forwards}
       .cell[data-lk]{animation:alk 600ms ease forwards}
+      /* rank / capture display */
+      .rank-display{text-align:center;font-size:20px;font-weight:900;padding:10px 0 2px}
+      .rank-title{color:#111}
+      .capture-pct{text-align:center;font-size:30px;font-weight:900;color:#c0392b;margin-bottom:6px}
+      .streak-display{text-align:center;font-size:13px;font-weight:700;color:#e65c00;margin-top:6px;padding:5px;background:#fff9f0;border-radius:8px}
+
       /* first-move banner */
       .firstmove-banner{background:#fffde7;border:2px solid #f5d000;border-radius:12px;padding:10px 16px;margin-bottom:10px;font-size:13px;line-height:1.6}
       .fm-green{background:#d4edda;color:#155724;padding:1px 5px;border-radius:4px;font-weight:700}
