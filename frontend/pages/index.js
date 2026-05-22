@@ -555,7 +555,8 @@ export default function Home() {
           <strong>Word Territory is a spatial strategy game — not just a word game.</strong>
           <ol>
             <li>Tap a <em>green cell</em> next to existing letters, type one letter to place it.</li>
-            <li>Select a connected path. Your placed letter can be anywhere in it.</li>
+            <li>Select a connected path of letters. <strong>Your placed letter can be anywhere in the path</strong> — beginning, middle, or end.</li>
+            <li>Example: board has D–S–T, you place U next to D → select D→U→S→T to form DUST.</li>
             <li>Submit a valid 3–6 letter word → claim the entire path as territory.</li>
             <li>Enclosed regions are <strong>captured</strong>. Fully-surrounded groups become <strong>locked</strong> (bold border).</li>
             <li><strong>Seed Move</strong> — place a letter without scoring if stuck.</li>
@@ -611,7 +612,7 @@ export default function Home() {
                     </>
                 ):(
                   <div className="pvhint">
-                    {!placed?"Tap green cell to start":!letter?"Type a letter":!incPlaced?"Path needs your letter":"Select path"}
+                    {!placed?"① Tap green cell  ② Type letter  ③ Select path  ④ Submit":!letter?"Type a letter":!incPlaced?"Path needs your letter":"Select path"}
                   </div>
                 )}
               </div>
