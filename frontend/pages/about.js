@@ -136,7 +136,7 @@ export default function About() {
               WORD<br />TERRITORY
             </h1>
             <p style={{ fontSize: "clamp(16px, 3vw, 20px)", color: "#aaa", lineHeight: 1.7, marginBottom: 32 }}>
-              Not just a word game. A spatial strategy game.<br />
+              Build words from a shared draft. Place letters. Capture territory.<br />
               Use words to <strong style={{ color: "#fff" }}>capture territory</strong>,{" "}
               <strong style={{ color: "#fff" }}>lock cells</strong>, and{" "}
               <strong style={{ color: "#fff" }}>outmaneuver</strong> your opponent.
@@ -197,7 +197,7 @@ export default function About() {
             <FeatureCard
               icon="🗺️"
               title="Territory, not just points"
-              desc="Every word you play claims cells on the board. Surround your opponent's territory to capture it — like Go, but with words."
+              desc="Draw tiles from a shared draft, build words, and place them on the board. Every letter you place claims territory — like Go, but with words."
             />
             <FeatureCard
               icon="🔒"
