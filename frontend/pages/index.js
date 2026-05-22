@@ -398,53 +398,80 @@ export default function Home() {
     return (r>0&&b[r-1][c].letter)||(r<10&&b[r+1][c].letter)||(c>0&&b[r][c-1].letter)||(c<10&&b[r][c+1].letter);
   };
   const isLegal = (r,c) => state && !state.board[r][c].letter && hasNbr(r,c);
-  const isDim   = (r,c) => {
+  const isDim = (r,c) => {
     if (!state || !human()) return true;
     const cell = state.board[r][c];
-    if (!placed && path.length === 0) {
-      // Before any tap: highlight green cells AND adjacent existing letters
-      return !isLegal(r,c) && !(cell.letter && hasNbr(r,c));
+    // Already selected cells are not dim but not clickable again
+    if (isSel(r,c)) return false;
+    // Phase 0: nothing selected yet
+    if (path.length === 0) {
+      // Can start from a green cell (will become placed) OR existing letter
+      return !isLegal(r,c) && !cell.letter;
     }
-    if (isSel(r,c)) return true;
-    if (path.length>0 && !adj(path[path.length-1],{row:r,col:c})) return true;
-    // If placed not yet set, allow green cells in path
-    if (!placed) return !cell.letter && !isLegal(r,c);
-    if (!cell.letter && !(placed.row===r && placed.col===c)) return true;
-    return false;
+    // Must be adjacent to last cell in path
+    const last = path[path.length - 1];
+    if (!adj(last, {row:r, col:c})) return true;
+    // Can select: existing letter OR the green placed cell
+    if (cell.letter) return false;
+    if (isLegal(r,c) && !placed) return false; // green cell not yet set as placed
+    if (placed && placed.row===r && placed.col===c) return false;
+    return true;
   };
+
   function clickCell(r,c) {
     if (!state || !human()) return;
     const cell = state.board[r][c];
 
-    if (!placed) {
+    // Deselect last cell if tapping it again (undo last step)
+    if (path.length > 0 && path[path.length-1].row===r && path[path.length-1].col===c) {
+      const newPath = path.slice(0, -1);
+      setPath(newPath);
+      // If we removed the placed cell from path, unset placed
+      if (placed && placed.row===r && placed.col===c) {
+        setPlaced(null);
+      }
+      return;
+    }
+
+    if (isSel(r,c)) return; // already in path (not last cell)
+
+    // Phase 0: start path
+    if (path.length === 0) {
       if (isLegal(r,c)) {
-        // Tap green cell first: set as placed, start path here
-        setPlaced({row:r,col:c}); setPath([{row:r,col:c}]); setError(""); return;
+        // Green cell → becomes placed cell
+        setPlaced({row:r, col:c});
+        setPath([{row:r, col:c}]);
+        setError("");
+      } else if (cell.letter) {
+        // Existing letter → start of path (placed cell comes later)
+        setPath([{row:r, col:c}]);
+        setError("");
       }
-      if (cell.letter && hasNbr(r,c)) {
-        // Tap existing letter first: start path here, placed cell comes later
-        setPath([{row:r,col:c}]); setError(""); return;
-      }
-      setError("Tap a green cell or an existing letter to start"); return;
+      return;
     }
 
-    // placed is set — or path has started without placed yet
-    if (placed && isSel(r,c)) return; // already selected
-    if (path.length > 0) {
-      const last = path[path.length-1];
-      if (!adj(last,{row:r,col:c})) return; // not adjacent
+    // Must be adjacent to last
+    const last = path[path.length - 1];
+    if (!adj(last, {row:r, col:c})) return;
+
+    // Adding green cell (placed cell not yet set)
+    if (isLegal(r,c) && !placed) {
+      setPlaced({row:r, col:c});
+      setPath(prev => [...prev, {row:r, col:c}]);
+      setError("");
+      return;
     }
 
-    if (!placed && isLegal(r,c)) {
-      // User tapped green cell after starting from existing letter → set as placed
-      setPlaced({row:r,col:c});
-      setPath(prev => [...prev, {row:r,col:c}]);
-      setError(""); return;
+    // Adding existing letter
+    if (cell.letter) {
+      setPath(prev => [...prev, {row:r, col:c}]);
+      return;
     }
 
-    if (!cell.letter && !(placed && placed.row===r && placed.col===c)) return;
-    if (isSel(r,c)) return;
-    setPath(prev => [...prev, {row:r,col:c}]);
+    // Adding the already-set placed cell
+    if (placed && placed.row===r && placed.col===c) {
+      setPath(prev => [...prev, {row:r, col:c}]);
+    }
   }
 
   // ── move actions ─────────────────────────────────────────────────────────
@@ -650,7 +677,7 @@ export default function Home() {
             <div className="btns">
               <button className="ba bsubmit" onClick={submit} disabled={!human()}>Submit</button>
               <button className="ba bseed"   onClick={seed}   disabled={!human()}>Seed</button>
-              <button className="ba"          onClick={()=>setPath(placed?[placed]:[])} disabled={!human()}>Clear</button>
+              <button className="ba"          onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
               <button className="ba"          onClick={pass}   disabled={!human()}>Pass</button>
             </div>
           </div>
