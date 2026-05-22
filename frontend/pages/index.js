@@ -10,9 +10,12 @@ import {
 // ── helpers ──────────────────────────────────────────────────────────────────
 const asKey = (r, c) => `${r}-${c}`;
 const adj    = (a, b) => Math.abs(a.row - b.row) + Math.abs(a.col - b.col) === 1;
+// 案4: territory count is primary victory condition (Othello-style)
 const tScore = (st, p) => !st ? 0 : p === "RED"
-  ? st.scores.redTerritory  * 1.5 + st.scores.redWord
-  : st.scores.blueTerritory * 1.5 + st.scores.blueWord;
+  ? st.scores.redTerritory
+  : st.scores.blueTerritory;
+const tScoreWord = (st, p) => !st ? 0 : p === "RED"
+  ? st.scores.redWord : st.scores.blueWord;
 const wScore = w => ({ 3:1,4:2,5:3,6:5 }[w?.length] || 0);
 
 const LS_DAILY  = "wt_daily_";
@@ -635,9 +638,9 @@ export default function Home() {
       {/* ── score bar ── */}
       <div className="sbar">
         <div className="srow">
-          <span className="stxt red-t">🔴 {redT.toFixed(1)}</span>
-          <span className="smid">{redT===blueT?"Tied":`${redT>blueT?"🔴":"🔵"} +${Math.abs(redT-blueT).toFixed(1)}`}</span>
-          <span className="stxt blue-t">{blueT.toFixed(1)} 🔵</span>
+          <span className="stxt red-t">🔴 {redT} cells</span>
+          <span className="smid">{redT===blueT?"Tied":`${redT>blueT?"🔴 RED":"🔵 BLUE"} +${Math.abs(redT-blueT)}`}</span>
+          <span className="stxt blue-t">{blueT} cells 🔵</span>
         </div>
         <div className="bar"><div className="br" style={{width:`${pct}%`}}/><div className="bb" style={{width:`${100-pct}%`}}/></div>
       </div>
@@ -889,7 +892,7 @@ export default function Home() {
 
       /* board */
       .bwrap{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px;overflow-x:auto}
-      .board{display:grid;grid-template-columns:repeat(11,44px);gap:5px;justify-content:center;min-width:max-content}
+      .board{display:grid;grid-template-columns:repeat(7,58px);gap:5px;justify-content:center;min-width:max-content}
       .cell{width:44px;height:44px;border:1.5px solid #c8c8c8;border-radius:9px;background:#fafafa;font-size:17px;font-weight:800;cursor:pointer;transition:background .12s}
       .cell.cr{background:rgba(192,57,43,.15);border-color:rgba(192,57,43,.3)}
       .cell.cb{background:rgba(34,113,179,.15);border-color:rgba(34,113,179,.3)}
@@ -1019,8 +1022,8 @@ export default function Home() {
       @media(min-width:901px){.scol{position:sticky;top:10px}}
       @media(max-width:900px){
         .layout{grid-template-columns:1fr}
-        .board{grid-template-columns:repeat(11,30px);gap:3px}
-        .cell{width:30px;height:30px;font-size:12px;border-radius:6px}
+        .board{grid-template-columns:repeat(7,42px);gap:3px}
+        .cell{width:42px;height:42px;font-size:15px;border-radius:6px}
         .bwrap{padding:10px}
         .hdr-l h1{font-size:18px}
         .hdr-r{width:100%;justify-content:flex-end}
