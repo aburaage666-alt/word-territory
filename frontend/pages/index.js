@@ -78,6 +78,44 @@ function buildShare(num, ds, r) {
   ].filter(l => l !== null).join("\n");
 }
 
+// ── Hand generator ───────────────────────────────────────────────────────────
+// Frequencies loosely based on English letter frequency.
+// Always guarantees ≥2 vowels in a 5-card hand.
+const VOWELS     = "AAAEEEIIOOUU".split("");
+const CONSONANTS = "BBCCDDFFGGHHHJKLLMMNNPPQRRRSSSTTTVVWWXYZ".split("");
+
+function randomLetter(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function dealHand(size = 5) {
+  const tiles = [];
+  // Guarantee 2 vowels
+  tiles.push(randomLetter(VOWELS));
+  tiles.push(randomLetter(VOWELS));
+  // Fill rest with mix (may be vowel or consonant)
+  for (let i = 2; i < size; i++) {
+    tiles.push(Math.random() < 0.38 ? randomLetter(VOWELS) : randomLetter(CONSONANTS));
+  }
+  // Shuffle
+  for (let i = tiles.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
+  }
+  return tiles;
+}
+
+function replaceCard(hand, usedLetter) {
+  // Replace the first matching tile with a new random one
+  const idx = hand.findIndex(c => c === usedLetter);
+  if (idx === -1) return [...hand.slice(1), Math.random() < 0.38 ? randomLetter(VOWELS) : randomLetter(CONSONANTS)];
+  const next = [...hand];
+  // Ensure replacement keeps vowel balance
+  const vowelCount = next.filter((c,i) => i !== idx && "AEIOU".includes(c)).length;
+  next[idx] = vowelCount < 2 ? randomLetter(VOWELS) : (Math.random() < 0.38 ? randomLetter(VOWELS) : randomLetter(CONSONANTS));
+  return next;
+}
+
 // ── StreakTracker (③) ─────────────────────────────────────────────────────────
 function getStreak() {
   try {
@@ -263,6 +301,7 @@ export default function Home() {
   const [path,   setPath]       = useState([]);
   const [placed, setPlaced]     = useState(null);
   const [letter, setLetter]     = useState("");
+  const [hand,   setHand]       = useState([]);   // 5-card hand
   const [error,  setError]      = useState("");
   const [suggestions, setSugg]  = useState([]);
   const [mode,   setMode]       = useState("normal");
@@ -324,6 +363,7 @@ export default function Home() {
         const d = await createGame({ botLevel: m });
         setGameId(d.game_id); setState(d.state); setDailyMode(false);
         reset(); setAnimGen(0); setBootMsg("");
+        setHand(dealHand(5));
         // Suggestions are non-critical — don't let failure block game start
         getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
         return;
@@ -342,6 +382,7 @@ export default function Home() {
     const d = await createDailyGame();
     setGameId(d.game_id); setState(d.state); setDailyMode(true);
     reset(); setAnimGen(0);
+    setHand(dealHand(5));
     getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
   }
   useEffect(() => { boot().catch(e => setError(String(e))); }, []);
@@ -445,9 +486,15 @@ export default function Home() {
     return () => clearTimeout(h);
   }, [gameId, placed, letter, JSON.stringify(path)]);
 
-  // Auto-focus letter input when a cell is placed
+  // When a cell is placed: auto-select first vowel in hand (convenience)
   useEffect(() => {
-    if (placed && letterRef.current) letterRef.current.focus();
+    if (placed) {
+      if (!letter && hand.length > 0) {
+        const vowel = hand.find(c => "AEIOU".includes(c));
+        if (vowel) setLetter(vowel);
+      }
+      if (letterRef.current) letterRef.current.focus();
+    }
   }, [placed]);
 
   // ── board helpers ────────────────────────────────────────────────────────
@@ -575,7 +622,9 @@ export default function Home() {
     if (!letter) { setError("Type one letter in the input box."); return; }
     try {
       const next = await submitMove({game_id:gameId,row:placed.row,col:placed.col,letter,path});
-      setState(next); reset(); await refresh();
+      setState(next);
+      setHand(h => replaceCard(h, letter));
+      reset(); await refresh();
     } catch(e) { setError(e.message||"Move failed"); }
   }
   async function seed() {
@@ -583,7 +632,9 @@ export default function Home() {
     if (!letter) { setError("Type one letter in the input box."); return; }
     try {
       const next = await seedMove(gameId,{row:placed.row,col:placed.col,letter});
-      setState(next); reset(); await refresh();
+      setState(next);
+      setHand(h => replaceCard(h, letter));
+      reset(); await refresh();
     } catch(e) { setError(e.message||"Seed failed"); }
   }
   async function pass() {
@@ -759,9 +810,33 @@ export default function Home() {
           {/* move controls */}
           <div className="mpanel">
             <div className="mrow">
-              <label className="mlbl">Letter</label>
-              <input ref={letterRef} className="minput" value={letter} maxLength={1} disabled={!human()}
-                onChange={e=>setLetter(e.target.value.toUpperCase().slice(0,1))} placeholder="A"/>
+              <label className="mlbl">Your Hand</label>
+              {/* ── Hand tiles ── */}
+              <div className="hand-tiles">
+                {hand.map((tile, i) => (
+                  <button
+                    key={i}
+                    className={`htile ${letter===tile && hand.indexOf(tile)===i ? "htile-sel" : ""} ${!human() ? "htile-dim" : ""}`}
+                    onClick={() => {
+                      if (!human()) return;
+                      setLetter(tile);
+                      if (letterRef.current) letterRef.current.focus();
+                    }}
+                    disabled={!human()}
+                  >
+                    {tile}
+                  </button>
+                ))}
+              </div>
+              {/* Hidden input keeps keyboard-entry working as fallback */}
+              <input ref={letterRef} className="hand-hidden-input" value={letter} maxLength={1}
+                onChange={e=>{
+                  const v = e.target.value.toUpperCase().slice(0,1);
+                  setLetter(v);
+                }}
+                disabled={!human()}
+                aria-label="selected letter"
+              />
               <div className={`pvbox ${ok?"pvok":""}`}>
                 <div className="pvword">{currentWord||"—"}</div>
                 {preview?(
@@ -779,9 +854,9 @@ export default function Home() {
                 ):(
                   <div className="pvhint">
                     {!placed
-                      ? "Tap a green square to place your letter."
+                      ? "Tap a green square to place a letter."
                       : !letter
-                      ? "Type one letter for this square."
+                      ? "Choose a tile from your hand."
                       : path.length < 2
                       ? "Now tap connected letters to make a word."
                       : !incPlaced
@@ -1008,6 +1083,24 @@ export default function Home() {
       .mpanel{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px}
       .mrow{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px}
       .mlbl{font-size:12px;color:#888;white-space:nowrap;padding-top:14px}
+      /* ── Hand tiles ── */
+      .hand-tiles{display:flex;gap:6px;flex-wrap:nowrap}
+      .htile{
+        width:46px;height:52px;border:2px solid #ccc;border-radius:11px;
+        background:#fff;font-size:20px;font-weight:900;cursor:pointer;
+        letter-spacing:0;font-family:"Arial Black",Arial;
+        transition:transform .1s,background .1s,border-color .1s;
+        flex-shrink:0;
+      }
+      .htile:hover:not(.htile-dim){background:#f0f7ff;border-color:#5b8dee;transform:translateY(-3px)}
+      .htile-sel{
+        background:#111 !important;color:#fff !important;
+        border-color:#111 !important;transform:translateY(-4px) !important;
+        box-shadow:0 4px 12px rgba(0,0,0,.25);
+      }
+      .htile-dim{opacity:.35;cursor:not-allowed}
+      .hand-hidden-input{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}
+      /* legacy input fallback */
       .minput{width:50px;height:48px;border:2px solid #ccc;border-radius:10px;font-size:22px;font-weight:800;text-align:center;outline:none;text-transform:uppercase;flex-shrink:0}
       .minput:focus{border-color:#111}.minput:disabled{background:#f4f4f4}
       .pvbox{flex:1;background:#f7f9fc;border:1px solid #e2e8f0;border-radius:12px;padding:10px;min-height:60px}
