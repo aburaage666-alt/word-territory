@@ -62,6 +62,11 @@ class GameState(BaseModel):
     lastCapturedCells: List[Coord] = []
     lastLockedCells: List[Coord] = []
     lastComboLabels: List[str] = []
+    # ── Draft / Hand system (設計案2) ──────────────────────────────────────
+    # sharedDraft: 3 letters revealed each turn — both players choose from these
+    sharedDraft: List[str] = []
+    redHand:  List[str] = []   # RED's current hand (chosen from draft)
+    blueHand: List[str] = []   # BLUE's current hand
 
 
 class CreateGameRequest(BaseModel):
