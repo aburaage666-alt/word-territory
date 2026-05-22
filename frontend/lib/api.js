@@ -6,8 +6,23 @@ async function readJson(res) {
   return data;
 }
 
+// Fetch with 12-second timeout — prevents hanging on slow Render cold starts
+async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } catch(e) {
+    if (e.name === "AbortError") throw new Error("Request timed out");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function createGame(options = {}) {
-  const res = await fetch(`${API_BASE}/games`, {
+  const res = await fetchWithTimeout(`${API_BASE}/games`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ botLevel: options.botLevel || "normal" }),
@@ -16,7 +31,7 @@ export async function createGame(options = {}) {
 }
 
 export async function submitMove(payload) {
-  const res = await fetch(`${API_BASE}/games/${payload.game_id}/move`, {
+  const res = await fetchWithTimeout(`${API_BASE}/games/${payload.game_id}/move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -25,7 +40,7 @@ export async function submitMove(payload) {
 }
 
 export async function seedMove(gameId, payload) {
-  const res = await fetch(`${API_BASE}/games/${gameId}/seed-move`, {
+  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/seed-move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -34,7 +49,7 @@ export async function seedMove(gameId, payload) {
 }
 
 export async function previewMove(gameId, payload) {
-  const res = await fetch(`${API_BASE}/games/${gameId}/preview-move`, {
+  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/preview-move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -43,33 +58,33 @@ export async function previewMove(gameId, payload) {
 }
 
 export async function passTurn(gameId) {
-  const res = await fetch(`${API_BASE}/games/${gameId}/pass`, { method: "POST" });
+  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/pass`, { method: "POST" });
   return readJson(res);
 }
 
 export async function getSuggestions(gameId) {
-  const res = await fetch(`${API_BASE}/games/${gameId}/suggestions`);
+  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/suggestions`);
   const data = await readJson(res);
   return data.suggestions || [];
 }
 
 export async function botMove(gameId) {
-  const res = await fetch(`${API_BASE}/games/${gameId}/bot-move`, { method: "POST" });
+  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/bot-move`, { method: "POST" });
   return readJson(res);
 }
 
 export async function getDailyInfo() {
-  const res = await fetch(`${API_BASE}/daily/today`);
+  const res = await fetchWithTimeout(`${API_BASE}/daily/today`);
   return readJson(res);
 }
 
 export async function createDailyGame() {
-  const res = await fetch(`${API_BASE}/daily/games`, { method: "POST" });
+  const res = await fetchWithTimeout(`${API_BASE}/daily/games`, { method: "POST" });
   return readJson(res);
 }
 
 export async function submitDailyScore(body) {
-  const res = await fetch(`${API_BASE}/daily/scores`, {
+  const res = await fetchWithTimeout(`${API_BASE}/daily/scores`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -78,12 +93,12 @@ export async function submitDailyScore(body) {
 }
 
 export async function getDailyLeaderboard() {
-  const res = await fetch(`${API_BASE}/daily/leaderboard`);
+  const res = await fetchWithTimeout(`${API_BASE}/daily/leaderboard`);
   return readJson(res);
 }
 
 export async function joinWaitlist(email) {
-  const res = await fetch(`${API_BASE}/waitlist`, {
+  const res = await fetchWithTimeout(`${API_BASE}/waitlist`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
@@ -92,6 +107,6 @@ export async function joinWaitlist(email) {
 }
 
 export async function getWaitlistCount() {
-  const res = await fetch(`${API_BASE}/waitlist/count`);
+  const res = await fetchWithTimeout(`${API_BASE}/waitlist/count`);
   return readJson(res);
 }
