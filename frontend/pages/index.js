@@ -31,8 +31,8 @@ function buildShare(num, ds, r) {
     `Word Territory Daily #${num}`,
     `${ds}  ·  ${r.openingName}`,
     ``,
-    `YOU (RED):  ${r.redScore.toFixed(1)} pts`,
-    `BOT (BLUE): ${r.blueScore.toFixed(1)} pts`,
+    `YOU (RED):  ${r.redScore} cells`,
+    `BOT (BLUE): ${r.blueScore} cells`,
     ``,
     `${r.winner === "RED" ? "WIN" : r.winner === null ? "DRAW" : "LOSS"}  ·  ${r.turns} turns`,
     r.bestMove ? `Best move: ${r.bestMove}` : null,
@@ -405,13 +405,13 @@ export default function Home() {
   const attackableSet = useMemo(() => {
     if (!state || !human()) return new Set();
     const s = new Set();
-    for (let r = 0; r < 11; r++) {
-      for (let c = 0; c < 11; c++) {
+    const BS = state.board.length;
+    for (let r = 0; r < BS; r++) {
+      for (let c = 0; c < BS; c++) {
         const cell = state.board[r][c];
         if (cell.letter && cell.owner === opponent && !cell.locked) {
-          // Check if any neighbour is a placeable empty cell
           for (const [nr, nc] of [[r-1,c],[r+1,c],[r,c-1],[r,c+1]]) {
-            if (nr>=0&&nr<11&&nc>=0&&nc<11&&!state.board[nr][nc].letter) {
+            if (nr>=0&&nr<BS&&nc>=0&&nc<BS&&!state.board[nr][nc].letter) {
               s.add(asKey(r,c));
               break;
             }
@@ -771,8 +771,8 @@ export default function Home() {
                 </h2>
                 <p className="muted">{dailyInfo.dateStr} · {dailyInfo.openingName}</p>
                 <div className="scard">
-                  <div className="scrow"><span>🔴 YOU</span><strong>{redT.toFixed(1)}</strong></div>
-                  <div className="scrow"><span>🔵 BOT</span><strong>{blueT.toFixed(1)}</strong></div>
+                  <div className="scrow"><span>🔴 YOU</span><strong>{redT} cells</strong></div>
+                  <div className="scrow"><span>🔵 BOT</span><strong>{blueT} cells</strong></div>
                   <div className="scres">{(dailyResult?.winner??state.winner)==="RED"?"✅ WIN":(dailyResult?.winner??state.winner)===null?"🤝 DRAW":"❌ LOSS"}</div>
                   <div className="muted tac">{(dailyResult?.turns??state.turn-1)} turns · Territory ×1.5 + Words</div>
                 </div>
@@ -816,8 +816,8 @@ export default function Home() {
                 <h2>Game Over</h2>
                 <p>Winner: <strong>{state.winner||"Draw"}</strong></p>
                 <div className="scard">
-                  <div className="scrow"><span>🔴 RED</span><strong>{redT.toFixed(1)}</strong></div>
-                  <div className="scrow"><span>🔵 BLUE</span><strong>{blueT.toFixed(1)}</strong></div>
+                  <div className="scrow"><span>🔴 RED</span><strong>{redT} cells</strong></div>
+                  <div className="scrow"><span>🔵 BLUE</span><strong>{blueT} cells</strong></div>
                 </div>
                 {topMoves.length>0&&<><h3>Top Moves</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
                 <div className="modal-btns">
@@ -1035,8 +1035,8 @@ export default function Home() {
       }
       @media(max-width:480px){
         .page{padding:8px}
-        .board{grid-template-columns:repeat(11,26px);gap:2px}
-        .cell{width:26px;height:26px;font-size:10px}
+        .board{grid-template-columns:repeat(7,38px);gap:3px}
+        .cell{width:38px;height:38px;font-size:14px}
         .hdr-l h1{font-size:16px}
         .mode-box{display:none}
       }
