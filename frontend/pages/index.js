@@ -789,6 +789,9 @@ export default function Home() {
       )}
 
       {/* ── banners ── */}
+      {state?.skipPenalty > 0 && (
+        <div className="bnr thinking">⚠ Skip penalty active: next Capture −{state.skipPenalty} territory</div>
+      )}
       {dailyMode&&<div className="dbanner">🗓️ Daily #{dailyInfo?.dayNumber} · {dailyInfo?.dateStr} · Strong Bot{streak>1?` · 🔥 ${streak} day streak`:""}</div>}
       {thinking&&<div className="bnr thinking">Bot is thinking…</div>}
       {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
@@ -817,7 +820,7 @@ export default function Home() {
           {/* move controls */}
           <div className="mpanel">
             <div className="mrow">
-              <label className="mlbl">Draft <span className="draft-hint">(choose 1)</span></label>
+              <label className="mlbl">Draft <span className="draft-hint">(choose 1)</span>{(()=>{const wc=state?.currentPlayer==="RED"?state?.redWildcards:state?.blueWildcards;return wc>0?<span className="wc-badge">★×{wc}</span>:null;})()}</label>
               {/* ── Draft tiles (設計案2: server-provided shared draft) ── */}
               <div className="hand-tiles">
                 {(state?.sharedDraft || []).map((tile, i) => (
@@ -875,6 +878,9 @@ export default function Home() {
             </div>
             <div className="btns">
               <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word" : "Submit"}</button>
+              <button className="ba bskip" onClick={handleSkipDraft} disabled={!human()}>
+                Skip{state?.skipPenalty > 0 ? ` (−${state.skipPenalty}T)` : ""}
+              </button>
               {!isTutorial && <button className="ba bdraw" onClick={seed} disabled={!human()}>Draw</button>}
               <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
               {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
@@ -890,7 +896,7 @@ export default function Home() {
             </div>
             {showSuggest&&(
               <div className="chips sc">
-                {suggestions.length?suggestions.map(w=><span key={w} className="chip">{w}</span>):<span className="muted">—</span>}
+                {suggestions.length?suggestions.map(w=><span key={w} className="chip">{w}</span>):<div className="no-word-hint">No word with this draft.<br/><strong>Skip Draft</strong> to reroll (−1T next capture).</div>}
               </div>
             )}
           </div>
@@ -1123,7 +1129,11 @@ export default function Home() {
       .ba:disabled{opacity:.4;cursor:not-allowed}
       .bsubmit{background:#111!important;color:#fff;border-color:#111!important}
       .bsubmit:hover:not(:disabled){background:#333!important}
+      .bskip{background:#fff0f8;border-color:#cc44aa;font-size:12px;color:#cc44aa;font-weight:700}
+      .bskip:hover:not(:disabled){background:#ffe0f5}
       .bdraw{background:#fffff0;border-color:#d4c000}
+      .no-word-hint{font-size:12px;color:#666;line-height:1.7;padding:4px 2px}
+      .wc-badge{font-size:11px;color:#cc44aa;font-weight:700;margin-left:6px;background:#fff0f8;padding:1px 5px;border-radius:999px;border:1px solid #cc44aa}
 
       /* side panel */
       .scol{display:flex;flex-direction:column;gap:10px}
