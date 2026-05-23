@@ -626,8 +626,8 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str):
     item = MoveHistoryItem(
         turn=state.turn,
         player=player,
-        word="DRAW",
-        moveType="DRAW",
+        word="SEED",
+        moveType="SEED",
         placedRow=row,
         placedCol=col,
         placedLetter=letter.upper(),
@@ -636,7 +636,7 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str):
         blueTotalAfter=total_score(temp, "BLUE"),
     )
     temp.moveHistory.append(item)
-    temp.recentMoves = [f"{player}: DRAW ({letter.upper()})"] + temp.recentMoves[:4]
+    temp.recentMoves = [f"{player}: SEED ({letter.upper()})"] + temp.recentMoves[:4]
     if is_game_over(temp):
         temp.winner = decide_winner(temp)
     return temp
