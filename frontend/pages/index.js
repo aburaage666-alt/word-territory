@@ -635,7 +635,7 @@ export default function Home() {
 
       reset(); await refresh();
       getAlmost(gameId).then(setAlmost).catch(()=>{});
-    } catch(e) { setError(e.message||"Draw failed"); }
+    } catch(e) { setError(e.message||"Seed failed"); }
   }
   async function pass() {
     try { const next = await passTurn(gameId); setState(next); reset(); await refresh(); }
@@ -775,7 +775,7 @@ export default function Home() {
             <li>Example: board has D–S–T, place U → select D→U→S→T → DUST!</li>
             <li>Enclose opponent cells to <strong>capture</strong> them. Fully-surrounded own cells become 🏰 <strong>Fortified</strong>.</li>
             <li><strong>Role Bonuses</strong> — earn extra territory: BRIDGE +3T · CUT +2T · POWER WORD +1T · FORTIFY CHAIN +2T</li>
-            <li><strong>Draw</strong> — place a tile without a word when stuck.</li>
+            <li><strong>Seed</strong> — place a tile without a word when stuck.</li>
             <li><strong>Goal:</strong> More red cells than blue wins. Territory beats vocabulary.</li>
             <li><strong>Daily Challenge</strong> — same draft seed worldwide each day. One attempt. Strong bot.</li>
           </ol>
@@ -847,8 +847,8 @@ export default function Home() {
               </div>
             </div>
             <div className="btns">
-              <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word" : "Submit"}</button>
-              {!isTutorial && <button className="ba bdraw" onClick={seed} disabled={!human()}>Draw</button>}
+              <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word ⚔" : "Submit"}</button>
+              {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()}>Seed</button>}
               <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
               {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
             </div>
@@ -875,7 +875,7 @@ export default function Home() {
             </div>
             {showSuggest&&(
               <div className="chips sc">
-                {[...new Set(suggestions)].length?[...new Set(suggestions)].map(w=><span key={w} className="chip">{w}</span>):<div className="no-word-hint">No playable word found.<br/>Try <strong>Draw</strong> to place a tile.</div>}
+                {[...new Set(suggestions)].length?[...new Set(suggestions)].map(w=><span key={w} className="chip">{w}</span>):<div className="no-word-hint">No playable word found.<br/>Use <strong>Seed</strong> to place a tile without capturing.</div>}
               </div>
             )}
           </div>
@@ -1115,7 +1115,7 @@ export default function Home() {
       .ba:disabled{opacity:.4;cursor:not-allowed}
       .bsubmit{background:#111!important;color:#fff;border-color:#111!important}
       .bsubmit:hover:not(:disabled){background:#333!important}
-      .bdraw{background:#fffff0;border-color:#d4c000}
+      .bseed{background:#fffff0;border-color:#d4c000}
       .no-word-hint{font-size:12px;color:#666;line-height:1.7;padding:4px 2px}
 
       /* side panel */
