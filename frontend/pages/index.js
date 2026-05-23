@@ -2,7 +2,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard,
+  botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard, skipDraft,
   getSuggestions, joinWaitlist, passTurn, previewMove, seedMove,
   submitDailyScore, submitMove,
 } from "../lib/api";
@@ -634,6 +634,16 @@ export default function Home() {
       reset(); await refresh();
     } catch(e) { setError(e.message||"Move failed"); }
   }
+  async function handleSkipDraft() {
+    if (!human()) return;
+    try {
+      const next = await skipDraft(gameId);
+      setState(next);
+      setLetter("");
+      setError("");
+    } catch(e) { setError(e.message || "Skip failed"); }
+  }
+
   async function seed() {
     if (!placed) { setError("Tap a green square first."); return; }
     if (!letter) { setError("Type one letter in the input box."); return; }
@@ -820,7 +830,12 @@ export default function Home() {
           {/* move controls */}
           <div className="mpanel">
             <div className="mrow">
-              <label className="mlbl">Draft <span className="draft-hint">(choose 1)</span>{(()=>{const wc=state?.currentPlayer==="RED"?state?.redWildcards:state?.blueWildcards;return wc>0?<span className="wc-badge">★×{wc}</span>:null;})()}</label>
+              <label className="mlbl">
+  Draft <span className="draft-hint">(choose 1)</span>
+  {((state?.currentPlayer==="RED" ? state?.redWildcards : state?.blueWildcards) || 0) > 0 && (
+    <span className="wc-badge">★×{state?.currentPlayer==="RED" ? state?.redWildcards : state?.blueWildcards}</span>
+  )}
+</label>
               {/* ── Draft tiles (設計案2: server-provided shared draft) ── */}
               <div className="hand-tiles">
                 {(state?.sharedDraft || []).map((tile, i) => (
