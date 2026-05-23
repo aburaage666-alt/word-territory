@@ -458,22 +458,36 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
         raise ValueError(f"You already played {word} this game. Try another word.")
     if not is_valid_word(word):
         raise ValueError(f"'{word}' is not in the dictionary. Try a common English word.")
+    # Draft check: placed letter must be in sharedDraft
+    player_check = state.currentPlayer
+    wc_left = state.redWildcards if player_check == 'RED' else state.blueWildcards
+    if state.sharedDraft and letter.upper() not in [t.upper() for t in state.sharedDraft]:
+        if wc_left <= 0:
+            raise ValueError(f"'{letter}' is not in the current draft {state.sharedDraft}. Use Skip Draft or save a Wildcard.")
+        # wildcard used — consumed later
 
     before = clone_state(state)
     temp = deepcopy(state)
     temp.board[row][col].letter = letter.upper()
-
-    player = state.currentPlayer
+    # 3-letter words: cap territory to 2 cells to prevent short-word spam
+    max_cells = 2 if len(word) == 3 else len(path)
+    cells_claimed = 0
     for p in path:
         cell = temp.board[p.row][p.col]
-        if not cell.fortified or cell.owner == player:
-            cell.owner = player
-
+        if cell.owner != player:
+            if cells_claimed >= max_cells:
+                continue
+            cells_claimed += 1
+        cell.owner = player
     apply_captures(temp, player)
     apply_locks(temp)
     recalc_scores(temp, current_player_for_word_score=player, last_word=word)
 
     delta = diff_cells(before, temp, player)
+    # Apply skip penalty: reduce territory by skipPenalty
+    if temp.skipPenalty > 0:
+        delta['territory_gain'] = max(0, delta['territory_gain'] - temp.skipPenalty)
+        temp.skipPenalty = 0
     combos = combo_labels(word, delta["territory_gain"], len(delta["newly_locked"]), delta["capture_count"], delta["leader_changed"], before_state=before, after_state=temp, player=player)
 
     item = MoveHistoryItem(
@@ -494,6 +508,12 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
         blueTotalAfter=delta["blue_total"],
     )
 
+    # Consume wildcard if placed letter was not in draft
+    if state.sharedDraft and letter.upper() not in [t.upper() for t in state.sharedDraft]:
+        if temp.currentPlayer == 'RED' and state.redWildcards > 0:
+            temp.redWildcards -= 1
+        elif temp.currentPlayer == 'BLUE' and state.blueWildcards > 0:
+            temp.blueWildcards -= 1
     temp.usedWords.append(word)
     temp.moveHistory.append(item)
     combo_suffix = f" [{' | '.join(combos)}]" if combos else ""
@@ -510,6 +530,22 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
         temp.winner = decide_winner(temp)
     # Advance draft for next turn
     advance_draft(temp)
+    return temp
+
+
+def apply_skip_draft(state: GameState) -> "GameState":
+    """Reroll the 6 shared draft tiles. Next Capture -1 territory penalty.
+    Does NOT pass the turn — player can still act this turn."""
+    if state.winner:
+        return state
+    from copy import deepcopy
+    temp = deepcopy(state)
+    temp.sharedDraft = deal_draft(6)
+    temp.skipPenalty = (temp.skipPenalty or 0) + 1
+    temp.lastChangedCells = []
+    temp.lastCapturedCells = []
+    temp.lastFortifiedCells = []
+    temp.lastComboLabels = []
     return temp
 
 
