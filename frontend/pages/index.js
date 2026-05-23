@@ -791,7 +791,7 @@ export default function Home() {
         <div className="bcol">
           {/* board */}
           <div className="bwrap">
-            <div className="board">
+            <div className="board-wrap"><div className="board">
               {state.board.map(row=>row.map(cell=>{
                 const k=asKey(cell.row,cell.col);
                 return <Cell key={k} cell={cell}
@@ -845,10 +845,12 @@ export default function Home() {
               </div>
             </div>
             <div className="btns">
+            <div className="brow">
               <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word ⚔" : "Submit"}</button>
               {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()}>Seed</button>}
               <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
               {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
+            </div>
             </div>
           </div>
         </div>
@@ -1033,6 +1035,7 @@ export default function Home() {
 
       /* board */
       .bwrap{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px;overflow-x:auto}
+      .board-wrap{width:100%;overflow-x:auto;display:flex;justify-content:center;-webkit-overflow-scrolling:touch}
       .board{display:grid;grid-template-columns:repeat(7,58px);gap:5px;justify-content:center;min-width:max-content}
       .cell{width:44px;height:44px;border:1.5px solid #c8c8c8;border-radius:9px;background:#fafafa;font-size:17px;font-weight:800;cursor:pointer;transition:background .12s}
       .cell.cr{background:rgba(192,57,43,.15);border-color:rgba(192,57,43,.3)}
@@ -1199,26 +1202,109 @@ export default function Home() {
       .btn-prem-cta:hover{background:#c9a227}
       .prem-note{text-align:center;font-size:12px;color:#888;line-height:1.5;margin-top:12px}
 
-      @media(min-width:901px){.scol{position:sticky;top:10px}}
+      /* ── Responsive: PC (901px+) ─────────────────────────────────────── */
+      @media(min-width:901px){
+        .scol{position:sticky;top:10px}
+      }
+
+      /* ── Responsive: Tablet (601–900px) ──────────────────────────────── */
       @media(max-width:900px){
         .layout{grid-template-columns:1fr}
-        .board{grid-template-columns:repeat(7,42px);gap:3px}
-        .cell{width:42px;height:42px;font-size:15px;border-radius:6px}
+        .board{grid-template-columns:repeat(7,44px);gap:4px}
+        .cell{width:44px;height:44px;font-size:15px;border-radius:7px}
         .bwrap{padding:10px}
         .hdr-l h1{font-size:18px}
-        .hdr-r{width:100%;justify-content:flex-end}
+        .hdr-r{width:100%;justify-content:flex-end;flex-wrap:wrap;gap:6px}
         .minput{width:46px;height:44px;font-size:20px}
-        .ba{padding:12px 6px;font-size:14px}
+        .ba{padding:12px 8px;font-size:14px}
         .scol{order:3}
         .hist{max-height:200px}
         .prem-compare{grid-template-columns:1fr}
+        .almost-box{margin-bottom:6px}
       }
-      @media(max-width:480px){
-        .page{padding:8px}
-        .board{grid-template-columns:repeat(7,38px);gap:3px}
-        .cell{width:38px;height:38px;font-size:14px}
-        .hdr-l h1{font-size:16px}
+
+      /* ── Responsive: Smartphone (≤600px) ─────────────────────────────── */
+      @media(max-width:600px){
+        .page{padding:6px 4px}
+        .hdr{flex-wrap:wrap;padding:8px 10px;gap:6px}
+        .hdr-l h1{font-size:16px;letter-spacing:1px}
+        .hdr-l .sub{font-size:10px}
+        .hdr-r{gap:4px}
+        .bsm{padding:5px 8px;font-size:12px}
+        .prem-btn{padding:5px 8px;font-size:12px}
+        .bprim{padding:7px 12px;font-size:13px}
         .mode-box{display:none}
+
+        /* Board: fill screen width */
+        .board-wrap{padding:6px 2px}
+        .board{
+          grid-template-columns:repeat(7,calc((100vw - 32px) / 7));
+          gap:3px;
+          min-width:unset;
+          width:100%;
+        }
+        .cell{
+          width:calc((100vw - 32px) / 7);
+          height:calc((100vw - 32px) / 7);
+          font-size:clamp(11px,3vw,16px);
+          border-radius:6px;
+        }
+
+        /* Score bar */
+        .sbar{padding:6px 8px}
+        .stxt{font-size:13px}
+        .smid{font-size:11px}
+
+        /* Move controls: stack vertically, larger touch targets */
+        .mpanel{padding:10px 8px}
+        .mrow{flex-wrap:wrap;gap:6px}
+        .mlbl{font-size:12px}
+        .minput{width:52px;height:52px;font-size:22px;flex-shrink:0}
+        .pvbox{flex:1;min-width:120px}
+
+        /* Buttons: 2×2 grid on small screens */
+        .brow{
+          display:grid;
+          grid-template-columns:1fr 1fr;
+          gap:8px;
+          padding:8px;
+        }
+        .ba{
+          padding:14px 8px;
+          font-size:14px;
+          min-height:48px;
+          border-radius:10px;
+        }
+        .bsubmit{grid-column:1 / -1}  /* Capture Word spans full width */
+
+        /* Side panel below board */
+        .scol{order:3;margin-top:8px}
+        .panel{margin-bottom:8px}
+        .almost-box{font-size:12px}
+        .almost-chip{font-size:11px;padding:2px 7px}
+
+        /* History compact */
+        .hist{max-height:160px}
+        .hi{padding:6px 8px}
+        .hw{font-size:13px}
+
+        /* First-move banner */
+        .firstmove-banner{font-size:12px;padding:8px 10px}
+
+        /* Tutorial: hide less critical elements */
+        .rules-box{font-size:13px}
+      }
+
+      /* ── Responsive: Very small (≤360px) ─────────────────────────────── */
+      @media(max-width:360px){
+        .board{grid-template-columns:repeat(7,calc((100vw - 20px) / 7));gap:2px}
+        .cell{
+          width:calc((100vw - 20px) / 7);
+          height:calc((100vw - 20px) / 7);
+          font-size:10px;
+          border-radius:5px;
+        }
+        .ba{font-size:13px;padding:12px 6px}
       }
     `}</style>
   </>;
