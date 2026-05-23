@@ -78,6 +78,14 @@ export async function skipDraft(gameId) {
   return readJson(res);
 }
 
+export async function getAlmost(gameId) {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/almost`, {}, 5000);
+    const data = await readJson(res);
+    return data.almost || [];
+  } catch { return []; }
+}
+
 export async function getDailyInfo() {
   const res = await fetchWithTimeout(`${API_BASE}/daily/today`);
   return readJson(res);
