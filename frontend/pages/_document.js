@@ -14,6 +14,7 @@ export default function Document() {
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Word Territory" />
         <link rel="apple-touch-icon" href="/icon.svg" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
         <link rel="icon" type="image/svg+xml" href="/icon.svg" />
 
         {/* Open Graph */}
