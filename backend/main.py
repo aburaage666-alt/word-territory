@@ -43,7 +43,6 @@ from daily import date_to_day_number, date_to_opening_idx, get_today_utc
 from engine import (
     apply_bot_move,
     apply_seed_move,
-    apply_skip_draft,
     build_initial_state,
     find_candidate_words,
     pass_turn,
@@ -295,19 +294,6 @@ def get_daily_leaderboard():
         totalPlayers=total,
         entries=entries,
     )
-
-
-# ── Skip Draft endpoint ─────────────────────────────────────────────────────
-
-@app.post("/games/{game_id}/skip-draft", response_model=GameState)
-def skip_draft(game_id: str):
-    """Reroll the shared draft tiles. Costs -1 territory on next Capture."""
-    state = GAMES.get(game_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Game not found")
-    next_state = apply_skip_draft(state)
-    GAMES[game_id] = next_state
-    return next_state
 
 
 # ── Premium Waitlist ③⑤ ──────────────────────────────────────────────────────
