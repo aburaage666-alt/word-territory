@@ -622,6 +622,7 @@ export default function Home() {
       setState(next);
 
       reset(); await refresh();
+      getAlmost(gameId).then(setAlmost).catch(()=>{});
     } catch(e) { setError(e.message||"Move failed"); }
   }
   async function seed() {
@@ -632,6 +633,7 @@ export default function Home() {
       setState(next);
 
       reset(); await refresh();
+      getAlmost(gameId).then(setAlmost).catch(()=>{});
     } catch(e) { setError(e.message||"Draw failed"); }
   }
   async function pass() {
@@ -854,6 +856,18 @@ export default function Home() {
 
         {/* side panel */}
         <div className="scol">
+          {almost.length > 0 && (
+            <div className="almost-box">
+              <div className="almost-title">🀄 Almost — place one letter to make:</div>
+              <div className="almost-list">
+                {almost.map((a,i) => (
+                  <span key={i} className="almost-chip">
+                    +<strong>{a.needs}</strong> → {a.word}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="panel">
             <div className="ph" onClick={()=>setSuggest(v=>!v)}>
               <span>💡 Suggested</span><span className="ci">{showSuggest?"▲":"▼"}</span>
@@ -1033,6 +1047,13 @@ export default function Home() {
       .cell[data-chg]{animation:aclaim 500ms ease forwards}
       .cell[data-cap]{animation:acap 800ms ease forwards}
       .cell[data-lk]{animation:alk 600ms ease forwards}
+      /* Tenpai / Almost UI */
+      .almost-box{background:#fffdf0;border:1.5px solid #f0c040;border-radius:12px;padding:8px 12px;margin-bottom:8px}
+      .almost-title{font-size:11px;font-weight:800;color:#b08000;margin-bottom:6px;letter-spacing:.3px}
+      .almost-list{display:flex;flex-wrap:wrap;gap:5px}
+      .almost-chip{background:#fff9e0;border:1px solid #e0c030;border-radius:20px;padding:2px 9px;font-size:12px;white-space:nowrap}
+      .almost-chip strong{color:#c06000;font-size:13px;font-weight:900}
+
       /* rank / capture display */
       .rank-display{text-align:center;font-size:20px;font-weight:900;padding:10px 0 2px}
       .rank-title{color:#111}
