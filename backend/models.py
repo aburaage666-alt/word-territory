@@ -62,11 +62,14 @@ class GameState(BaseModel):
     lastCapturedCells: List[Coord] = []
     lastFortifiedCells: List[Coord] = []
     lastComboLabels: List[str] = []
-    # ── Draft / Hand system (設計案2) ──────────────────────────────────────
-    # sharedDraft: 3 letters revealed each turn — both players choose from these
+    # ── Draft / Hand system ──────────────────────────────────────────────
     sharedDraft: List[str] = []
-    redHand:  List[str] = []   # RED's current hand (chosen from draft)
-    blueHand: List[str] = []   # BLUE's current hand
+    redHand:  List[str] = []
+    blueHand: List[str] = []
+    # ── Anti-stalemate fields ─────────────────────────────────────────────
+    skipPenalty: int = 0        # territory penalty on next Capture (-1 per Skip used)
+    redWildcards:  int = 2      # Emergency Wildcards remaining for RED
+    blueWildcards: int = 2      # Emergency Wildcards remaining for BLUE
 
 
 class CreateGameRequest(BaseModel):
