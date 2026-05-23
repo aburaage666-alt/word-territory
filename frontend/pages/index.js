@@ -769,15 +769,13 @@ export default function Home() {
         <div className="rules">
           <strong>Build words from a shared draft. Place letters. Capture territory.</strong>
           <ol>
-            <li><strong>Draft:</strong> Each turn, 6 tiles appear. Pick one tile — the bot picks from the same 6.</li>
-            <li>Tap a <em>green square</em> to place your tile. Your tile can appear anywhere in the word path.</li>
-            <li>Connect letters to make a 3–6 letter word → press <strong>Capture Word</strong> to claim the path.</li>
-            <li>Example: board has D–S–T, place U → select D→U→S→T → DUST!</li>
-            <li>Enclose opponent cells to <strong>capture</strong> them. Fully-surrounded own cells become 🏰 <strong>Fortified</strong>.</li>
-            <li><strong>Role Bonuses</strong> — earn extra territory: BRIDGE +3T · CUT +2T · POWER WORD +1T · FORTIFY CHAIN +2T</li>
-            <li><strong>Seed</strong> — place a tile without a word when stuck.</li>
+            <li>Tap a <em>green square</em> → type any letter → connect letters to make a 3–6 letter word → press <strong>Capture Word ⚔</strong>.</li>
+            <li>Example: board has D–S–T, place U → select D→U→S→T → DUST! Your letter can go anywhere in the path.</li>
+            <li>Enclose opponent cells to <strong>capture</strong> them. Surrounded own cells become 🏰 <strong>Fortified</strong>.</li>
+            <li><strong>Role Bonuses</strong> — earn extra territory: BRIDGE +3T · CUT +2T · CROSS WORD +2T · POWER WORD +1T</li>
+            <li><strong>Seed</strong> — place a letter without capturing when stuck. Good for setting up future words.</li>
             <li><strong>Goal:</strong> More red cells than blue wins. Territory beats vocabulary.</li>
-            <li><strong>Daily Challenge</strong> — same draft seed worldwide each day. One attempt. Strong bot.</li>
+            <li><strong>Daily Challenge</strong> — same board worldwide each day. One attempt. Strong bot.</li>
           </ol>
         </div>
       )}
