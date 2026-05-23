@@ -134,6 +134,68 @@ def can_spell_from_board(word: str, available_letters: set[str]) -> bool:
     return all(ch in available_letters for ch in word)
 
 
+def find_almost_words(state: GameState, limit: int = 5) -> list[dict]:
+    """
+    Tenpai / Almost UI: find words that are playable if ONE specific letter
+    were available — i.e., words reachable from current board + any single new tile.
+
+    Returns list of {"word": str, "needs": str, "length": int}
+    sorted by length desc (longer = more exciting).
+    """
+    words = get_words()
+    excluded = set(state.usedWords)
+    board_letters = board_letters_set(state)
+    placeable = get_placeable_empty_cells(state)
+
+    results = []
+    seen_words = set()
+
+    # For each placeable cell, try every letter A-Z
+    import string
+    for (er, ec) in placeable[:8]:  # limit cells for speed
+        for needed_letter in string.ascii_uppercase:
+            # Skip if this letter is already on the board (not "almost")
+            if needed_letter in board_letters:
+                continue
+            # Try paths from this cell with this letter
+            starts = [(er, ec)]
+            for nr, nc in get_neighbors(er, ec):
+                if state.board[nr][nc].letter:
+                    starts.append((nr, nc))
+
+            for start in starts[:3]:
+                stack = [([start], frozenset([start]))]
+                while stack:
+                    path, visited = stack.pop()
+                    plen = len(path)
+                    if plen >= 3 and (er, ec) in set(path):
+                        word = letters_from_path(state, path, (er, ec), needed_letter)
+                        if (word and word in words and word not in excluded
+                                and word not in seen_words):
+                            seen_words.add(word)
+                            results.append({
+                                "word": word,
+                                "needs": needed_letter,
+                                "length": len(word),
+                            })
+                            if len(results) >= limit * 3:
+                                # Sort and return early
+                                results.sort(key=lambda x: -x["length"])
+                                return results[:limit]
+                    if plen >= 4:
+                        continue
+                    r, c = path[-1]
+                    for nr, nc in get_neighbors(r, c):
+                        if (nr, nc) in visited:
+                            continue
+                        if (nr, nc) != (er, ec) and not state.board[nr][nc].letter:
+                            continue
+                        stack.append((path + [(nr, nc)], visited | {(nr, nc)}))
+
+    results.sort(key=lambda x: -x["length"])
+    return results[:limit]
+
+
 def find_candidate_words(state: GameState, limit: int = 15) -> list[str]:
     """Return words that are ACTUALLY PLAYABLE this turn (path-verified, fast).
 
@@ -210,10 +272,37 @@ def _count_connected_regions(state, player: str) -> int:
     return regions
 
 
+def find_cross_words(state, row: int, col: int, letter: str) -> list[str]:
+    """Find all valid words formed by placing letter at (row,col) in any direction."""
+    found = []
+    words = get_words()
+    # Check all 4 directions: right, down, left, up
+    for dr, dc in [(0,1),(1,0),(0,-1),(-1,0)]:
+        # Walk to start of potential word in opposite direction
+        r, c = row - dr, col - dc
+        while in_bounds(r,c) and state.board[r][c].letter:
+            r -= dr; c -= dc
+        r += dr; c += dc
+        # Read the word in this direction
+        chars = []
+        rr, cc = r, c
+        while in_bounds(rr, cc) and (state.board[rr][cc].letter or (rr==row and cc==col)):
+            chars.append(letter if (rr==row and cc==col) else state.board[rr][cc].letter)
+            rr += dr; cc += dc
+        word_str = "".join(chars).upper()
+        if len(word_str) >= 3 and word_str in words and word_str not in found:
+            found.append(word_str)
+    return found
+
+
 def combo_labels(word: str, territory_gain: int, lock_gain: int,
                  capture_count: int, leader_changed: bool,
-                 before_state=None, after_state=None, player: str = "RED") -> list[str]:
+                 before_state=None, after_state=None, player: str = "RED",
+                 cross_words: list | None = None,
+                 row: int = -1, col: int = -1) -> list[str]:
     labels = []
+
+    # ── Power moves ───────────────────────────────────────────────────────────
     if len(word) >= 5:
         labels.append("POWER WORD")
     if territory_gain >= 6:
@@ -226,18 +315,60 @@ def combo_labels(word: str, territory_gain: int, lock_gain: int,
         labels.append("DOUBLE CAPTURE")
     if leader_changed:
         labels.append("SWING MOVE")
-    # 設計案3: BRIDGE — move unified two separate owned regions
+
+    # ── Cross Word Bonus (もじぴったん的連鎖) ─────────────────────────────────
+    if cross_words and len(cross_words) >= 2:
+        labels.append("CROSS WORD")    # 1手で2語以上 +2T
+
+    # ── Early Yaku (序盤でも出る役) ──────────────────────────────────────────
     if before_state and after_state:
         opponent = "BLUE" if player == "RED" else "RED"
+        before_my_t  = sum(1 for r in before_state.board for c in r if c.owner == player)
+        after_my_t   = sum(1 for r in after_state.board  for c in r if c.owner == player)
+        before_opp_t = sum(1 for r in before_state.board for c in r if c.owner == opponent)
+        after_opp_t  = sum(1 for r in after_state.board  for c in r if c.owner == opponent)
+
+        # FIRST CAPTURE — first time taking opponent's cell this game
+        before_hist = [m for m in before_state.moveHistory if "CAPTURE" in (m.comboLabels or [])]
+        if capture_count >= 1 and not before_hist:
+            labels.append("FIRST CAPTURE")
+
+        # EDGE REACH — player reaches the board edge for the first time
+        edge_before = any(
+            before_state.board[r][c].owner == player
+            for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)
+            if r in (0, BOARD_SIZE-1) or c in (0, BOARD_SIZE-1)
+        )
+        edge_after = any(
+            after_state.board[r][c].owner == player
+            for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)
+            if r in (0, BOARD_SIZE-1) or c in (0, BOARD_SIZE-1)
+        )
+        if not edge_before and edge_after:
+            labels.append("EDGE REACH")
+
+        # LINK — extends own territory (connects to own cell)
+        if before_state and row >= 0:
+            for nr, nc in get_neighbors(row, col):
+                if in_bounds(nr, nc) and before_state.board[nr][nc].owner == player:
+                    labels.append("LINK")
+                    break
+
+        # COMEBACK — player was behind, now leads or closes gap significantly
+        before_leader = "RED" if before_state.scores.redTerritory > before_state.scores.blueTerritory else "BLUE"
+        if before_leader != player and leader_changed:
+            labels.append("COMEBACK")
+
+        # BRIDGE and CUT
         before_regions = _count_connected_regions(before_state, player)
         after_regions  = _count_connected_regions(after_state, player)
         if before_regions > 1 and after_regions < before_regions:
             labels.append("BRIDGE")
-        # CUT — move split opponent's territory into more regions
-        before_opp = _count_connected_regions(before_state, opponent)
-        after_opp  = _count_connected_regions(after_state, opponent)
-        if after_opp > before_opp:
+        before_opp_r = _count_connected_regions(before_state, opponent)
+        after_opp_r  = _count_connected_regions(after_state, opponent)
+        if after_opp_r > before_opp_r:
             labels.append("CUT")
+
     return labels
 
 
@@ -376,16 +507,32 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
 
     delta = diff_cells(before, temp, player)
 
-    combos = combo_labels(word, delta["territory_gain"], len(delta["newly_locked"]), delta["capture_count"], delta["leader_changed"], before_state=before, after_state=temp, player=player)
+    # Detect cross words formed by this placement
+    cross_words_formed = find_cross_words(before, row, col, letter)
+    combos = combo_labels(
+        word, delta["territory_gain"], len(delta["newly_locked"]),
+        delta["capture_count"], delta["leader_changed"],
+        before_state=before, after_state=temp, player=player,
+        cross_words=cross_words_formed, row=row, col=col,
+    )
 
 
     # ── Role bonus: award extra territory for strategic combos ───────────────
     bonus = 0
+    # Power moves (中盤〜終盤)
     if "BRIDGE" in combos:        bonus += 3
     if "CUT" in combos:           bonus += 2
-    if "POWER WORD" in combos:    bonus += 1
     if "FORTIFY CHAIN" in combos: bonus += 2
     if "DOUBLE CAPTURE" in combos:bonus += 1
+    if "POWER WORD" in combos:    bonus += 1
+    if "MEGA TERRITORY" in combos:bonus += 1
+    # Cross Word (もじぴったん的連鎖)
+    if "CROSS WORD" in combos:    bonus += 2
+    # Early Yaku (序盤でも出る役)
+    if "FIRST CAPTURE" in combos: bonus += 1
+    if "EDGE REACH" in combos:    bonus += 1
+    if "LINK" in combos:          bonus += 1
+    if "COMEBACK" in combos:      bonus += 2
     if bonus > 0:
         # Convert nearest unfortified non-player cells to player (bonus territory)
         import random as _r
