@@ -347,12 +347,8 @@ def combo_labels(word: str, territory_gain: int, lock_gain: int,
         if not edge_before and edge_after:
             labels.append("EDGE REACH")
 
-        # LINK — extends own territory (connects to own cell)
-        if before_state and row >= 0:
-            for nr, nc in get_neighbors(row, col):
-                if in_bounds(nr, nc) and before_state.board[nr][nc].owner == player:
-                    labels.append("LINK")
-                    break
+        # LINK only fires if BRIDGE didn't (BRIDGE is the stronger version)
+        # Both are checked via region counting — skip standalone LINK to reduce spam
 
         # COMEBACK — player was behind, now leads or closes gap significantly
         before_leader = "RED" if before_state.scores.redTerritory > before_state.scores.blueTerritory else "BLUE"
@@ -531,7 +527,6 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     # Early Yaku (序盤でも出る役)
     if "FIRST CAPTURE" in combos: bonus += 1
     if "EDGE REACH" in combos:    bonus += 1
-    if "LINK" in combos:          bonus += 1
     if "COMEBACK" in combos:      bonus += 2
     if bonus > 0:
         # Convert nearest unfortified non-player cells to player (bonus territory)
@@ -888,11 +883,16 @@ def choose_bot_move(state: GameState):
         moves = generate_normal_moves(state)
         if not moves:
             return None
-        # Pick move with best territory + word score (no simulation needed)
+        player = state.currentPlayer
         def quick_score(m):
             try:
                 ns = simulate_move(state, m)
-                return evaluate_state_for_player(ns, state.currentPlayer)
+                base = evaluate_state_for_player(ns, player)
+                last = ns.moveHistory[-1]
+                bonus = sum(3 if l in ("BRIDGE","CUT") else
+                            2 if l in ("CAPTURE","CROSS WORD") else 1
+                            for l in (last.comboLabels or []))
+                return base + bonus
             except Exception:
                 return word_score(m["word"])
         return max(moves, key=quick_score)
@@ -911,8 +911,16 @@ def choose_bot_move(state: GameState):
             continue
         my_value = evaluate_state_for_player(next_state, player)
         last = next_state.moveHistory[-1]
-        combo_bonus = len(last.comboLabels) * 3
-        value = my_value + word_score(move["word"]) * 1.4 + combo_bonus
+        # Role bonus weighting — prefer moves that earn strategic combos
+        combo_value = 0
+        for label in (last.comboLabels or []):
+            if label in ("BRIDGE", "CUT"):           combo_value += 8
+            elif label in ("CROSS WORD", "FORTIFY CHAIN"): combo_value += 5
+            elif label in ("DOUBLE CAPTURE", "COMEBACK"): combo_value += 4
+            elif label in ("POWER WORD", "CAPTURE"):  combo_value += 3
+            elif label in ("EDGE REACH", "FIRST CAPTURE"): combo_value += 2
+            else:                                     combo_value += 1
+        value = my_value + word_score(move["word"]) * 1.4 + combo_value
         if value > best_value:
             best_value = value
             best_move = move
