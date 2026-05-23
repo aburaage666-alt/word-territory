@@ -73,6 +73,11 @@ export async function botMove(gameId) {
   return readJson(res);
 }
 
+export async function skipDraft(gameId) {
+  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/skip-draft`, { method: "POST" });
+  return readJson(res);
+}
+
 export async function getDailyInfo() {
   const res = await fetchWithTimeout(`${API_BASE}/daily/today`);
   return readJson(res);
