@@ -458,9 +458,10 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
         raise ValueError(f"You already played {word} this game. Try another word.")
     if not is_valid_word(word):
         raise ValueError(f"'{word}' is not in the dictionary. Try a common English word.")
+    player = state.currentPlayer
     # Draft check: placed letter must be in sharedDraft
-    player_check = state.currentPlayer
-    wc_left = state.redWildcards if player_check == 'RED' else state.blueWildcards
+    # player already defined above
+    wc_left = state.redWildcards if player == 'RED' else state.blueWildcards
     if state.sharedDraft and letter.upper() not in [t.upper() for t in state.sharedDraft]:
         if wc_left <= 0:
             raise ValueError(f"'{letter}' is not in the current draft {state.sharedDraft}. Use Skip Draft or save a Wildcard.")
