@@ -25,107 +25,6 @@ OPENINGS = [
 OPENING_COORDS = [(1, 3), (2, 2), (2, 3), (2, 4), (2, 5), (3, 3), (4, 3)]
 
 
-# ── Draft / Hand system ──────────────────────────────────────────────────────
-
-# Letter frequency pool (roughly English frequency, vowel-generous)
-LETTER_POOL = (
-    "AAAAAAAAAA"   # 10
-    "EEEEEEEEEEEE" # 12
-    "IIIIIIIIII"   # 10
-    "OOOOOOOO"     # 8
-    "UUUUU"        # 5
-    "SSSSSSSS"     # 8
-    "TTTTTTTT"     # 8
-    "RRRRRRRR"     # 8
-    "NNNNNNNN"     # 8
-    "LLLLLL"       # 6
-    "DDDDDD"       # 6
-    "CCCCCC"       # 6
-    "MMMMMM"       # 6
-    "BBBB"         # 4
-    "FFFF"         # 4
-    "GGGG"         # 4
-    "HHHH"         # 4
-    "PPPP"         # 4
-    "WWWW"         # 4
-    "VVVV"         # 4
-    "KKKK"         # 4
-    "JJXX"         # 2 each
-    "QZ"           # 1 each
-)
-VOWELS_SET = set("AEIOU")
-
-
-def deal_draft(n: int = 6) -> list[str]:
-    """Draw n letters from the pool, guaranteeing at least 1 vowel."""
-    import random
-    pool = list(LETTER_POOL)
-    random.shuffle(pool)
-    result = pool[:n]
-    # Ensure at least 1 vowel
-    if not any(c in VOWELS_SET for c in result):
-        # Replace last consonant with a random vowel
-        vowels = [c for c in pool if c in VOWELS_SET]
-        if vowels:
-            result[-1] = random.choice(vowels)
-    return result
-
-
-def deal_hand(n: int = 5) -> list[str]:
-    """Deal n letters ensuring at least 2 vowels."""
-    import random
-    pool = list(LETTER_POOL)
-    random.shuffle(pool)
-    result = []
-    vowels_added = 0
-    for c in pool:
-        if len(result) >= n:
-            break
-        if c in VOWELS_SET and vowels_added < 2:
-            result.append(c)
-            vowels_added += 1
-        elif c not in VOWELS_SET and len(result) - vowels_added < n - 2:
-            result.append(c)
-        elif c in VOWELS_SET:
-            result.append(c)
-            vowels_added += 1
-        else:
-            result.append(c)
-    random.shuffle(result)
-    return result[:n]
-
-
-def draft_for_bot(state, hand: list[str]) -> str:
-    """Bot picks the most useful letter from its hand based on board state."""
-    available_on_board = board_letters_set(state)
-    words = get_words()
-    excluded = set(state.usedWords)
-
-    best_letter = hand[0]
-    best_count = 0
-    for letter in hand:
-        test_set = available_on_board | {letter}
-        count = sum(
-            1 for w in words
-            if len(w) <= 4 and w not in excluded
-            and all(c in test_set for c in w)
-        )
-        if count > best_count:
-            best_count = count
-            best_letter = letter
-    return best_letter
-
-
-def init_draft(state) -> None:
-    """Set initial draft and hands at game start."""
-    state.sharedDraft = deal_draft(6)
-    state.redHand  = deal_hand(1)   # start with 1 — grows via draft
-    state.blueHand = deal_hand(1)
-
-
-def advance_draft(state) -> None:
-    """Issue a new 3-card draft for the upcoming turn pair."""
-    state.sharedDraft = deal_draft(6)
 
 
 def in_bounds(r: int, c: int) -> bool:
@@ -222,9 +121,7 @@ def build_initial_state(bot_level: str = "normal", opening_idx: int | None = Non
         lastCapturedCells=[],
         lastFortifiedCells=[],
         lastComboLabels=[],
-        sharedDraft=deal_draft(6),
-        redHand=[],
-        blueHand=[],
+
     )
     return state
 
@@ -459,13 +356,6 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     if not is_valid_word(word):
         raise ValueError(f"'{word}' is not in the dictionary. Try a common English word.")
     player = state.currentPlayer
-    # Draft check: placed letter must be in sharedDraft
-    # player already defined above
-    wc_left = state.redWildcards if player == 'RED' else state.blueWildcards
-    if state.sharedDraft and letter.upper() not in [t.upper() for t in state.sharedDraft]:
-        if wc_left <= 0:
-            raise ValueError(f"'{letter}' is not in the current draft {state.sharedDraft}. Use Skip Draft or save a Wildcard.")
-        # wildcard used — consumed later
 
     before = clone_state(state)
     temp = deepcopy(state)
@@ -485,11 +375,32 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     recalc_scores(temp, current_player_for_word_score=player, last_word=word)
 
     delta = diff_cells(before, temp, player)
-    # Apply skip penalty: reduce territory by skipPenalty
-    if temp.skipPenalty > 0:
-        delta['territory_gain'] = max(0, delta['territory_gain'] - temp.skipPenalty)
-        temp.skipPenalty = 0
+
     combos = combo_labels(word, delta["territory_gain"], len(delta["newly_locked"]), delta["capture_count"], delta["leader_changed"], before_state=before, after_state=temp, player=player)
+
+
+    # ── Role bonus: award extra territory for strategic combos ───────────────
+    bonus = 0
+    if "BRIDGE" in combos:        bonus += 3
+    if "CUT" in combos:           bonus += 2
+    if "POWER WORD" in combos:    bonus += 1
+    if "FORTIFY CHAIN" in combos: bonus += 2
+    if "DOUBLE CAPTURE" in combos:bonus += 1
+    if bonus > 0:
+        # Convert nearest unfortified non-player cells to player (bonus territory)
+        import random as _r
+        candidates = [
+            (r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)
+            if temp.board[r][c].letter and temp.board[r][c].owner != player
+            and not temp.board[r][c].fortified
+        ]
+        _r.shuffle(candidates)
+        for r, c in candidates[:bonus]:
+            temp.board[r][c].owner = player
+        if candidates[:bonus]:
+            apply_locks(temp)
+            recalc_scores(temp)
+            delta["territory_gain"] += min(bonus, len(candidates))
 
     item = MoveHistoryItem(
         turn=state.turn,
@@ -509,12 +420,7 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
         blueTotalAfter=delta["blue_total"],
     )
 
-    # Consume wildcard if placed letter was not in draft
-    if state.sharedDraft and letter.upper() not in [t.upper() for t in state.sharedDraft]:
-        if temp.currentPlayer == 'RED' and state.redWildcards > 0:
-            temp.redWildcards -= 1
-        elif temp.currentPlayer == 'BLUE' and state.blueWildcards > 0:
-            temp.blueWildcards -= 1
+
     temp.usedWords.append(word)
     temp.moveHistory.append(item)
     combo_suffix = f" [{' | '.join(combos)}]" if combos else ""
@@ -529,24 +435,6 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
 
     if is_game_over(temp):
         temp.winner = decide_winner(temp)
-    # Advance draft for next turn
-    advance_draft(temp)
-    return temp
-
-
-def apply_skip_draft(state: GameState) -> "GameState":
-    """Reroll the 6 shared draft tiles. Next Capture -1 territory penalty.
-    Does NOT pass the turn — player can still act this turn."""
-    if state.winner:
-        return state
-    from copy import deepcopy
-    temp = deepcopy(state)
-    temp.sharedDraft = deal_draft(6)
-    temp.skipPenalty = (temp.skipPenalty or 0) + 1
-    temp.lastChangedCells = []
-    temp.lastCapturedCells = []
-    temp.lastFortifiedCells = []
-    temp.lastComboLabels = []
     return temp
 
 
@@ -586,7 +474,6 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str):
     temp.recentMoves = [f"{player}: DRAW ({letter.upper()})"] + temp.recentMoves[:4]
     if is_game_over(temp):
         temp.winner = decide_winner(temp)
-    advance_draft(temp)
     return temp
 
 
@@ -776,7 +663,7 @@ def evaluate_state_for_player(state: GameState, player: str) -> float:
     )
 
 
-def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: set, allowed_letters: set | None = None) -> list[dict]:
+def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: set) -> list[dict]:
     """
     Ultra-fast bot move finder for Render free tier.
 
@@ -813,8 +700,7 @@ def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: 
                 plen = len(path)
 
                 if plen >= 3 and (er, ec) in set(path):
-                    candidate_letters = [l for l in LETTERS if allowed_letters is None or l in allowed_letters]
-                    for placed_letter in candidate_letters:
+                    for placed_letter in LETTERS:
                         word = letters_from_path(state, path, (er, ec), placed_letter)
                         if word and word in words and word not in excluded:
                             results.append({
@@ -842,15 +728,12 @@ def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: 
 
 def generate_normal_moves(state: GameState) -> list[dict]:
     used = set(state.usedWords)
-    # Bot is constrained to sharedDraft letters (設計案2)
-    allowed = set(state.sharedDraft) if state.sharedDraft else None
-    return _fast_bot_moves(state, max_len=4, max_results=5, excluded=used, allowed_letters=allowed)
+    return _fast_bot_moves(state, max_len=4, max_results=5, excluded=used)
 
 
 def generate_strong_moves(state: GameState) -> list[dict]:
     used = set(state.usedWords)
-    allowed = set(state.sharedDraft) if state.sharedDraft else None
-    return _fast_bot_moves(state, max_len=4, max_results=8, excluded=used, allowed_letters=allowed)
+    return _fast_bot_moves(state, max_len=4, max_results=8, excluded=used)
 
 
 def choose_bot_move(state: GameState):
