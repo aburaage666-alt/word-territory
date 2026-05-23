@@ -2,7 +2,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard,
+  botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard, getAlmost,
   getSuggestions, joinWaitlist, passTurn, previewMove, seedMove,
   submitDailyScore, submitMove,
 } from "../lib/api";
@@ -330,6 +330,7 @@ export default function Home() {
   const [nickname,    setNickname]    = useState("");
   const [myRank,      setMyRank]      = useState(null);
   const [submitted,   setSubmitted]   = useState(false);
+  const [almost,      setAlmost]      = useState([]);
   // Tutorial UX: track how many turns have been played
   const tutTurns = (state?.moveHistory?.length || 0);
   const isTutorial = tutTurns < 3;  // first 3 turns = beginner mode
