@@ -62,14 +62,7 @@ class GameState(BaseModel):
     lastCapturedCells: List[Coord] = []
     lastFortifiedCells: List[Coord] = []
     lastComboLabels: List[str] = []
-    # ── Draft / Hand system ──────────────────────────────────────────────
-    sharedDraft: List[str] = []
-    redHand:  List[str] = []
-    blueHand: List[str] = []
-    # ── Anti-stalemate fields ─────────────────────────────────────────────
-    skipPenalty: int = 0        # territory penalty on next Capture (-1 per Skip used)
-    redWildcards:  int = 2      # Emergency Wildcards remaining for RED
-    blueWildcards: int = 2      # Emergency Wildcards remaining for BLUE
+    # (Draft system removed — free letter placement restored)
 
 
 class CreateGameRequest(BaseModel):
