@@ -2,7 +2,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard, skipDraft,
+  botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard,
   getSuggestions, joinWaitlist, passTurn, previewMove, seedMove,
   submitDailyScore, submitMove,
 } from "../lib/api";
@@ -485,15 +485,9 @@ export default function Home() {
     return () => clearTimeout(h);
   }, [gameId, placed, letter, JSON.stringify(path)]);
 
-  // When a cell is placed: auto-select first vowel from draft
+  // Auto-focus letter input when cell is placed
   useEffect(() => {
-    if (placed) {
-      if (!letter && state?.sharedDraft?.length > 0) {
-        const vowel = state.sharedDraft.find(c => "AEIOU".includes(c));
-        setLetter(vowel || state.sharedDraft[0] || "");
-      }
-      if (letterRef.current) letterRef.current.focus();
-    }
+    if (placed && letterRef.current) letterRef.current.focus();
   }, [placed]);
 
   // ── board helpers ────────────────────────────────────────────────────────
@@ -619,14 +613,10 @@ export default function Home() {
   async function submit() {
     if (!placed) { setError("Tap a green square first."); return; }
     if (!letter) {
-      const draft = state?.sharedDraft || [];
-      setError(draft.length ? `Choose one of the ${draft.join("/")} tiles.` : "Choose a tile.");
+      setError("Choose a green square on the board first.");
       return;
     }
-    if (state?.sharedDraft?.length && !state.sharedDraft.includes(letter)) {
-      setError(`"${letter}" is not in the draft. Choose from: ${(state?.sharedDraft||[]).join(", ")}`);
-      return;
-    }
+
     try {
       const next = await submitMove({game_id:gameId,row:placed.row,col:placed.col,letter,path});
       setState(next);
@@ -634,16 +624,6 @@ export default function Home() {
       reset(); await refresh();
     } catch(e) { setError(e.message||"Move failed"); }
   }
-  async function handleSkipDraft() {
-    if (!human()) return;
-    try {
-      const next = await skipDraft(gameId);
-      setState(next);
-      setLetter("");
-      setError("");
-    } catch(e) { setError(e.message || "Skip failed"); }
-  }
-
   async function seed() {
     if (!placed) { setError("Tap a green square first."); return; }
     if (!letter) { setError("Type one letter in the input box."); return; }
@@ -791,7 +771,8 @@ export default function Home() {
             <li>Connect letters to make a 3–6 letter word → press <strong>Capture Word</strong> to claim the path.</li>
             <li>Example: board has D–S–T, place U → select D→U→S→T → DUST!</li>
             <li>Enclose opponent cells to <strong>capture</strong> them. Fully-surrounded own cells become 🏰 <strong>Fortified</strong>.</li>
-            <li><strong>Draw</strong> — place a tile without a word if stuck. Combos: BRIDGE · CUT · CAPTURE · SWING MOVE.</li>
+            <li><strong>Role Bonuses</strong> — earn extra territory: BRIDGE +3T · CUT +2T · POWER WORD +1T · FORTIFY CHAIN +2T</li>
+            <li><strong>Draw</strong> — place a tile without a word when stuck.</li>
             <li><strong>Goal:</strong> More red cells than blue wins. Territory beats vocabulary.</li>
             <li><strong>Daily Challenge</strong> — same draft seed worldwide each day. One attempt. Strong bot.</li>
           </ol>
@@ -799,9 +780,6 @@ export default function Home() {
       )}
 
       {/* ── banners ── */}
-      {state?.skipPenalty > 0 && (
-        <div className="bnr thinking">⚠ Skip penalty active: next Capture −{state.skipPenalty} territory</div>
-      )}
       {dailyMode&&<div className="dbanner">🗓️ Daily #{dailyInfo?.dayNumber} · {dailyInfo?.dateStr} · Strong Bot{streak>1?` · 🔥 ${streak} day streak`:""}</div>}
       {thinking&&<div className="bnr thinking">Bot is thinking…</div>}
       {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
@@ -830,37 +808,11 @@ export default function Home() {
           {/* move controls */}
           <div className="mpanel">
             <div className="mrow">
-              <label className="mlbl">
-  Draft <span className="draft-hint">(choose 1)</span>
-  {((state?.currentPlayer==="RED" ? state?.redWildcards : state?.blueWildcards) || 0) > 0 && (
-    <span className="wc-badge">★×{state?.currentPlayer==="RED" ? state?.redWildcards : state?.blueWildcards}</span>
-  )}
-</label>
-              {/* ── Draft tiles (設計案2: server-provided shared draft) ── */}
-              <div className="hand-tiles">
-                {(state?.sharedDraft || []).map((tile, i) => (
-                  <button
-                    key={i}
-                    className={`htile ${letter===tile ? "htile-sel" : ""} ${!human() ? "htile-dim" : ""}`}
-                    onClick={() => {
-                      if (!human()) return;
-                      setLetter(tile);
-                      if (letterRef.current) letterRef.current.focus();
-                    }}
-                    disabled={!human()}
-                  >
-                    {tile}
-                  </button>
-                ))}
-              </div>
-              {/* Hidden input keeps keyboard-entry working as fallback */}
-              <input ref={letterRef} className="hand-hidden-input" value={letter} maxLength={1}
-                onChange={e=>{
-                  const v = e.target.value.toUpperCase().slice(0,1);
-                  setLetter(v);
-                }}
+              <label className="mlbl">Letter</label>
+              <input ref={letterRef} className="minput" value={letter} maxLength={1}
                 disabled={!human()}
-                aria-label="selected letter"
+                onChange={e=>setLetter(e.target.value.toUpperCase().slice(0,1))}
+                placeholder="A"
               />
               <div className={`pvbox ${ok?"pvok":""}`}>
                 <div className="pvword">{currentWord||"—"}</div>
@@ -881,7 +833,7 @@ export default function Home() {
                     {!placed
                       ? "Tap a green square to place a letter."
                       : !letter
-                      ? "Choose a tile from your hand."
+                      ? "Type one letter."
                       : path.length < 2
                       ? "Now tap connected letters to make a word."
                       : !incPlaced
@@ -893,9 +845,6 @@ export default function Home() {
             </div>
             <div className="btns">
               <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word" : "Submit"}</button>
-              <button className="ba bskip" onClick={handleSkipDraft} disabled={!human()}>
-                Skip{state?.skipPenalty > 0 ? ` (−${state.skipPenalty}T)` : ""}
-              </button>
               {!isTutorial && <button className="ba bdraw" onClick={seed} disabled={!human()}>Draw</button>}
               <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
               {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
@@ -1144,11 +1093,8 @@ export default function Home() {
       .ba:disabled{opacity:.4;cursor:not-allowed}
       .bsubmit{background:#111!important;color:#fff;border-color:#111!important}
       .bsubmit:hover:not(:disabled){background:#333!important}
-      .bskip{background:#fff0f8;border-color:#cc44aa;font-size:12px;color:#cc44aa;font-weight:700}
-      .bskip:hover:not(:disabled){background:#ffe0f5}
       .bdraw{background:#fffff0;border-color:#d4c000}
       .no-word-hint{font-size:12px;color:#666;line-height:1.7;padding:4px 2px}
-      .wc-badge{font-size:11px;color:#cc44aa;font-weight:700;margin-left:6px;background:#fff0f8;padding:1px 5px;border-radius:999px;border:1px solid #cc44aa}
 
       /* side panel */
       .scol{display:flex;flex-direction:column;gap:10px}
