@@ -349,4 +349,9 @@ def join_waitlist(payload: WaitlistSubmission):
 @app.get("/waitlist/count")
 def waitlist_count():
     """Return the number of waitlist signups (public, for social proof)."""
-    return {"count": len(WAITLIST)}
+    try:
+        with get_db() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM waitlist").fetchone()[0]
+        return {"count": count}
+    except Exception:
+        return {"count": 0}
