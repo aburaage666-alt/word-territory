@@ -45,6 +45,7 @@ from engine import (
     apply_seed_move,
     build_initial_state,
     find_candidate_words,
+    find_almost_words,
     pass_turn,
     preview_move,
     validate_and_apply_move,
@@ -294,6 +295,21 @@ def get_daily_leaderboard():
         totalPlayers=total,
         entries=entries,
     )
+
+
+# ── Almost / Tenpai endpoint ─────────────────────────────────────────────────
+
+@app.get("/games/{game_id}/almost")
+def get_almost(game_id: str):
+    """Return words that are 1 letter away from being playable (Tenpai UI)."""
+    state = GAMES.get(game_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Game not found")
+    try:
+        almost = find_almost_words(state, limit=4)
+        return {"almost": almost}
+    except Exception:
+        return {"almost": []}
 
 
 # ── Premium Waitlist ③⑤ ──────────────────────────────────────────────────────
