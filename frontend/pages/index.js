@@ -709,7 +709,7 @@ export default function Home() {
       <div className="hdr">
         <div className="hdr-l">
           <h1>WORD TERRITORY{dailyMode&&dailyInfo&&<span className="dpill">Daily #{dailyInfo.dayNumber}</span>}</h1>
-          <p className="sub">Opening: {state.openingName} · T{state.currentPlayer} · Round {state.turn}</p>
+          <p className="sub">Opening: {state.openingName} · {thinking?"Bot thinking…":state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
         </div>
         <div className="hdr-r">
           {!dailyMode&&(
@@ -875,7 +875,7 @@ export default function Home() {
             </div>
             {showSuggest&&(
               <div className="chips sc">
-                {suggestions.length?suggestions.map(w=><span key={w} className="chip">{w}</span>):<div className="no-word-hint">No word with this draft.<br/><strong>Skip Draft</strong> to reroll (−1T next capture).</div>}
+                {[...new Set(suggestions)].length?[...new Set(suggestions)].map(w=><span key={w} className="chip">{w}</span>):<div className="no-word-hint">No playable word found.<br/>Try <strong>Draw</strong> to place a tile.</div>}
               </div>
             )}
           </div>
