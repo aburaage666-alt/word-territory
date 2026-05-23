@@ -805,6 +805,7 @@ export default function Home() {
               }))}
             </div>
           </div>
+          </div>
 
           {/* move controls */}
           <div className="mpanel">
@@ -844,13 +845,11 @@ export default function Home() {
                 )}
               </div>
             </div>
-            <div className="btns">
             <div className="brow">
               <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word ⚔" : "Submit"}</button>
               {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()}>Seed</button>}
               <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
               {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
-            </div>
             </div>
           </div>
         </div>
@@ -1275,7 +1274,7 @@ export default function Home() {
           min-height:48px;
           border-radius:10px;
         }
-        .bsubmit{grid-column:1 / -1}  /* Capture Word spans full width */
+        .bsubmit{grid-column:1 / -1}
 
         /* Side panel below board */
         .scol{order:3;margin-top:8px}
