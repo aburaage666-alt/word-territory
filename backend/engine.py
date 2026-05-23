@@ -196,16 +196,29 @@ def find_almost_words(state: GameState, limit: int = 5) -> list[dict]:
     return results[:limit]
 
 
+# Words to exclude from Suggested panel (obscure/abbreviations)
+_SUGGESTED_EXCLUDE = frozenset({
+    'HRS','HES','MAS','EST','SIM','IDES','ODES','PHI','PSI','ETA',
+    'TAO','OCA','EFT','OFT','ERE','EKE','GOB','POI','KOI','ZIT',
+    'JUT','OOH','AAH','HMM','DOIT','NARC','OTIC','ALEC',
+})
+
+
 def find_candidate_words(state: GameState, limit: int = 15) -> list[str]:
-    """Return words that are ACTUALLY PLAYABLE this turn (path-verified, fast).
-
-    Uses the same fast path-first algorithm as the bot so suggestions
-    are always genuinely playable and return quickly on Render free tier.
-    """
+    """Return PLAYABLE words for Suggested — filtered for common words."""
     excluded = set(state.usedWords)
-    moves = _fast_bot_moves(state, max_len=4, max_results=limit, excluded=excluded)
-    return [m["word"] for m in moves]
-
+    moves = _fast_bot_moves(state, max_len=4, max_results=limit * 2, excluded=excluded)
+    seen = set()
+    result = []
+    for m in moves:
+        w = m["word"]
+        if w in seen or w in _SUGGESTED_EXCLUDE:
+            continue
+        seen.add(w)
+        result.append(w)
+        if len(result) >= limit:
+            break
+    return result
 
 def snapshot(state: GameState):
     owners = {(cell.row, cell.col): cell.owner for row in state.board for cell in row}
@@ -528,6 +541,16 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     if "FIRST CAPTURE" in combos: bonus += 1
     if "EDGE REACH" in combos:    bonus += 1
     if "COMEBACK" in combos:      bonus += 2
+
+    # ── Anti-snowball: cap bonus when player is already winning by 10+ cells ──
+    if bonus > 0 and temp.scores:
+        my_t   = temp.scores.redTerritory if player == "RED" else temp.scores.blueTerritory
+        opp_t  = temp.scores.blueTerritory if player == "RED" else temp.scores.redTerritory
+        lead   = my_t - opp_t
+        if lead >= 15:
+            bonus = min(bonus, 1)   # hard cap at 1 when crushing
+        elif lead >= 10:
+            bonus = min(bonus, 2)   # soft cap at 2 when comfortably ahead
     if bonus > 0:
         # Convert nearest unfortified non-player cells to player (bonus territory)
         import random as _r
