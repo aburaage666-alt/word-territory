@@ -121,8 +121,11 @@ def build_initial_state(bot_level: str = "normal", opening_idx: int | None = Non
         lastCapturedCells=[],
         lastFortifiedCells=[],
         lastComboLabels=[],
-
     )
+    # Initialize Letter Market
+    active, preview = generate_letter_market(state)
+    state.marketLetters  = active
+    state.previewLetters = preview
     return state
 
 
@@ -202,6 +205,190 @@ _SUGGESTED_EXCLUDE = frozenset({
     'TAO','OCA','EFT','OFT','ERE','EKE','GOB','POI','KOI','ZIT',
     'JUT','OOH','AAH','HMM','DOIT','NARC','OTIC','ALEC',
 })
+
+
+# ── Letter Market ─────────────────────────────────────────────────────────────
+
+# English letter frequency (rough weights)
+_LETTER_WEIGHTS = {
+    'E':12,'T':9,'A':8,'O':8,'I':7,'N':7,'S':6,'H':6,'R':6,'D':4,'L':4,
+    'C':3,'U':3,'M':2,'W':2,'F':2,'G':2,'Y':2,'P':2,'B':2,'V':1,'K':1,
+    'J':1,'X':1,'Q':1,'Z':1,
+}
+_ALL_LETTERS = list(_LETTER_WEIGHTS.keys())
+_WEIGHTS     = [_LETTER_WEIGHTS[l] for l in _ALL_LETTERS]
+
+
+def _letter_enables_word(state: GameState, letter: str, max_check: int = 8) -> bool:
+    """Quick check: does placing this letter anywhere create ≥1 valid word?"""
+    words = get_words()
+    placeable = get_placeable_empty_cells(state)
+    import random as _r
+    sample = placeable[:max_check]
+    for (er, ec) in sample:
+        # Try a fast path from each cell
+        stack = [([p], frozenset([p])) for p in [(er,ec)] +
+                 [(r,c) for r,c in get_neighbors(er,ec) if state.board[r][c].letter]]
+        while stack:
+            path, vis = stack.pop()
+            if len(path) >= 3 and (er,ec) in set(path):
+                w = letters_from_path(state, path, (er,ec), letter)
+                if w and w in words:
+                    return True
+            if len(path) >= 4:
+                continue
+            r, c = path[-1]
+            for nr, nc in get_neighbors(r, c):
+                if (nr,nc) in vis: continue
+                if (nr,nc) != (er,ec) and not state.board[nr][nc].letter: continue
+                stack.append((path+[(nr,nc)], vis|{(nr,nc)}))
+    return False
+
+
+def _letter_best_stats(state: GameState, letter: str) -> dict:
+    """Return {word_count, best_gain, best_word, roles} for one letter."""
+    excluded = set(state.usedWords)
+    moves = _fast_bot_moves_for_letter(state, letter, max_results=8, excluded=excluded)
+    if not moves:
+        return {"wordCount": 0, "bestGain": 0, "bestWord": "", "roles": []}
+    best = max(moves, key=lambda m: m.get("territory_gain", 0))
+    roles = []
+    for m in moves[:3]:
+        ns = simulate_move(state, m)
+        last = ns.moveHistory[-1]
+        for lbl in (last.comboLabels or []):
+            if lbl not in roles:
+                roles.append(lbl)
+    return {
+        "wordCount": len(moves),
+        "bestGain":  best.get("territory_gain", 0),
+        "bestWord":  best.get("word", ""),
+        "roles":     roles[:3],
+    }
+
+
+def _fast_bot_moves_for_letter(state: GameState, letter: str,
+                                max_results: int = 8,
+                                excluded: set | None = None) -> list[dict]:
+    """Like _fast_bot_moves but constrained to a specific letter."""
+    excluded = excluded or set()
+    words = get_words()
+    player = state.currentPlayer
+    placeable = get_placeable_empty_cells(state)
+    results = []
+
+    for (er, ec) in placeable[:6]:
+        stack = [([p], frozenset([p])) for p in [(er,ec)] +
+                 [(r,c) for r,c in get_neighbors(er,ec) if state.board[r][c].letter]]
+        while stack:
+            path, vis = stack.pop()
+            if len(path) >= 3 and (er,ec) in set(path):
+                w = letters_from_path(state, path, (er,ec), letter)
+                if w and w in words and w not in excluded:
+                    # Quick territory estimate: path length
+                    gain = len(path)
+                    results.append({"row": er, "col": ec, "letter": letter,
+                                    "path": [Coord(row=r, col=c) for r,c in path],
+                                    "word": w, "territory_gain": gain})
+                    excluded.add(w)
+                    if len(results) >= max_results:
+                        return results
+            if len(path) >= 5: continue
+            r, c = path[-1]
+            for nr, nc in get_neighbors(r, c):
+                if (nr,nc) in vis: continue
+                if (nr,nc) != (er,ec) and not state.board[nr][nc].letter: continue
+                stack.append((path+[(nr,nc)], vis|{(nr,nc)}))
+    return results
+
+
+def generate_letter_market(state: GameState) -> tuple[list[str], list[str]]:
+    """
+    Generate 3 active + 3 preview letters for the Letter Market.
+    Rules:
+    - At least 1 of the 3 active letters must enable ≥1 valid word on the board.
+    - Bias toward frequency-weighted letters.
+    - Avoid Q/X/Z/J in the active 3 unless board needs them.
+    """
+    import random as _r
+
+    RARE = {'Q','X','Z','J'}
+    board_letters = board_letters_set(state)
+
+    def weighted_letter(exclude_rare=True):
+        pool = [l for l in _ALL_LETTERS if l not in board_letters]
+        if exclude_rare:
+            pool = [l for l in pool if l not in RARE] or pool
+        weights = [_LETTER_WEIGHTS[l] for l in pool]
+        total = sum(weights)
+        r = _r.random() * total
+        cum = 0
+        for l, w in zip(pool, weights):
+            cum += w
+            if r <= cum:
+                return l
+        return pool[-1]
+
+    # Generate candidates; ensure at least 1 has valid word
+    max_attempts = 20
+    active = []
+    for _ in range(max_attempts):
+        active = [weighted_letter() for _ in range(3)]
+        # Deduplicate
+        seen = set()
+        uniq = []
+        for l in active:
+            if l not in seen:
+                seen.add(l); uniq.append(l)
+            else:
+                # replace with another letter
+                replacement = weighted_letter()
+                seen.add(replacement); uniq.append(replacement)
+        active = uniq
+
+        # Check at least 1 enables a word
+        if any(_letter_enables_word(state, l) for l in active):
+            break
+        # Last resort: replace one with a vowel
+        if _ == max_attempts - 2:
+            active[0] = _r.choice(['A','E','I','O','U'])
+
+    # Preview letters (simple frequency-weighted, no validation needed)
+    preview = [weighted_letter(exclude_rare=True) for _ in range(3)]
+
+    return active, preview
+
+
+def advance_market(state: GameState, used_letter: str) -> tuple[list[str], list[str]]:
+    """
+    Remove used_letter from active market, pull 1 from preview,
+    add new letter to end of preview.
+    Returns (new_active, new_preview).
+    """
+    import random as _r
+    active  = [l for l in state.marketLetters if l != used_letter]
+    if not active:
+        active = list(state.marketLetters)
+    if len(active) < 3 and state.previewLetters:
+        active.append(state.previewLetters[0])
+    preview = state.previewLetters[1:] if state.previewLetters else []
+    # Refill preview
+    board_letters = board_letters_set(state)
+    RARE = {'Q','X','Z','J'}
+    while len(preview) < 3:
+        pool = [l for l in _ALL_LETTERS if l not in RARE]
+        preview.append(_r.choices(pool, weights=[_LETTER_WEIGHTS[l] for l in pool])[0])
+    return active[:3], preview[:3]
+
+
+def get_market_stats(state: GameState) -> list[dict]:
+    """Return stats for each active market letter."""
+    stats = []
+    for letter in state.marketLetters:
+        s = _letter_best_stats(state, letter)
+        s["letter"] = letter
+        stats.append(s)
+    return stats
 
 
 def find_candidate_words(state: GameState, limit: int = 15) -> list[str]:
@@ -600,6 +787,12 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
 
     if is_game_over(temp):
         temp.winner = decide_winner(temp)
+
+    # Advance Letter Market
+    if temp.marketLetters:
+        new_active, new_preview = advance_market(temp, letter)
+        temp.marketLetters  = new_active
+        temp.previewLetters = new_preview
     return temp
 
 
@@ -639,6 +832,11 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str):
     temp.recentMoves = [f"{player}: SEED ({letter.upper()})"] + temp.recentMoves[:4]
     if is_game_over(temp):
         temp.winner = decide_winner(temp)
+    # Advance market
+    if temp.marketLetters:
+        new_active, new_preview = advance_market(temp, letter.upper())
+        temp.marketLetters  = new_active
+        temp.previewLetters = new_preview
     return temp
 
 
