@@ -431,7 +431,7 @@ export default function Home() {
         const next = await botMove(gameId);
         if (cancelled) return;
         setState(next);
-        if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
+        // Market stable during bot turns (bot not market-constrained)
         reset();
         try { setSugg(await getSuggestions(gameId)); } catch(_) {}
       } catch(e) {
