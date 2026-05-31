@@ -103,7 +103,7 @@ def make_move(game_id: str, payload: MoveRequest):
     if not state:
         raise HTTPException(status_code=404, detail="Game not found")
     try:
-        next_state = validate_and_apply_move(state, payload.row, payload.col, payload.letter, payload.path)
+        next_state = validate_and_apply_move(state, payload.row, payload.col, payload.letter, payload.path, advance_market_flag=True)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     GAMES[game_id] = next_state
@@ -116,7 +116,7 @@ def seed_move(game_id: str, payload: SeedMoveRequest):
     if not state:
         raise HTTPException(status_code=404, detail="Game not found")
     try:
-        next_state = apply_seed_move(state, payload.row, payload.col, payload.letter)
+        next_state = apply_seed_move(state, payload.row, payload.col, payload.letter, advance_market_flag=True)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     GAMES[game_id] = next_state
