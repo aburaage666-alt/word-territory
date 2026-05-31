@@ -371,9 +371,13 @@ export default function Home() {
         const d = await createGame({ botLevel: m });
         setGameId(d.game_id); setState(d.state); setDailyMode(false);
         reset(); setAnimGen(0); setBootMsg("");
-
+        if (d.state?.marketLetters?.length > 0) {
+          setMarket({ active: d.state.marketLetters, preview: d.state.previewLetters||[],
+            stats: d.state.marketLetters.map(l=>({letter:l,wordCount:0,bestGain:0,bestWord:'',roles:[]})),
+            freeLetterUsed: !!d.state.freeLetterUsed });
+          getMarket(d.game_id).then(setMarket).catch(() => {});
+        }
         getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
-        getMarket(d.game_id).then(setMarket).catch(() => {});
         return;
       } catch(e) {
         lastErr = e;
@@ -390,9 +394,13 @@ export default function Home() {
     const d = await createDailyGame();
     setGameId(d.game_id); setState(d.state); setDailyMode(true);
     reset(); setAnimGen(0);
-
+    if (d.state?.marketLetters?.length > 0) {
+      setMarket({ active: d.state.marketLetters, preview: d.state.previewLetters||[],
+        stats: d.state.marketLetters.map(l=>({letter:l,wordCount:0,bestGain:0,bestWord:'',roles:[]})),
+        freeLetterUsed: !!d.state.freeLetterUsed });
+      getMarket(d.game_id).then(setMarket).catch(() => {});
+    }
     getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
-    getMarket(d.game_id).then(setMarket).catch(() => {});
   }
   useEffect(() => { boot().catch(e => setError(String(e))); }, []);
 
@@ -421,6 +429,7 @@ export default function Home() {
         const next = await botMove(gameId);
         if (cancelled) return;
         setState(next);
+        if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
         reset();
         try { setSugg(await getSuggestions(gameId)); } catch(_) {}
       } catch(e) {
@@ -630,6 +639,8 @@ export default function Home() {
     try {
       const next = await submitMove({game_id:gameId,row:placed.row,col:placed.col,letter,path});
       setState(next);
+      // Update market from state immediately
+      if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
 
       reset(); await refresh();
       getAlmost(gameId).then(setAlmost).catch(()=>{});
@@ -642,6 +653,7 @@ export default function Home() {
     try {
       const next = await seedMove(gameId,{row:placed.row,col:placed.col,letter});
       setState(next);
+      if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
 
       reset(); await refresh();
       getAlmost(gameId).then(setAlmost).catch(()=>{});
