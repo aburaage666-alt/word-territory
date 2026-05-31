@@ -2,9 +2,9 @@ import Head from "next/head";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard, getAlmost, getMarket,
-  getSuggestions, joinWaitlist, passTurn, previewMove, seedMove,
-  submitDailyScore, submitMove,
+  botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard, getAlmost,
+  getMarket, getSuggestions, joinWaitlist, passTurn, previewMove, seedMove,
+  submitDailyScore, submitMove, useFreeLetter,
 } from "../lib/api";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -77,6 +77,34 @@ function buildShare(num, ds, r) {
     `word-territory1.onrender.com`,
   ].filter(l => l !== null).join("\n");
 }
+
+function normalizeMarket(raw = {}) {
+  const active = raw.active || raw.marketLetters || [];
+  const preview = raw.preview || raw.previewLetters || [];
+  const statsFromApi = raw.stats || [];
+  const roleOrder = ["SAFE", "POWER", "SETUP"];
+  const stats = active.map((letter, i) => {
+    const s = statsFromApi.find(x => x.letter === letter) || statsFromApi[i] || {};
+    return {
+      letter,
+      wordCount: Number(s.wordCount || 0),
+      bestGain: Number(s.bestGain || 0),
+      bestWord: s.bestWord || "",
+      roles: s.roles || [],
+      kind: s.kind || roleOrder[i] || "TACTIC",
+      hint: s.hint || (s.bestWord ? `Best ${s.bestWord}` : "Setup"),
+      setupWord: s.setupWord || "",
+    };
+  });
+  return {
+    active,
+    preview,
+    stats,
+    freeLetterUsed: !!raw.freeLetterUsed,
+  };
+}
+
+const marketLabel = (s, i) => s.kind || ["SAFE", "POWER", "SETUP"][i] || "TACTIC";
 
 // ── Hand generator ───────────────────────────────────────────────────────────
 // Frequencies loosely based on English letter frequency.
@@ -364,6 +392,15 @@ export default function Home() {
     setSum(false); setCopied(false); setShareText(""); setNickname(""); setMyRank(null);
     setSubmitted(false); summaryFired.current = false;
   }
+  async function refreshMarket(id = gameId) {
+    if (!id) return;
+    try {
+      const mk = await getMarket(id);
+      setMarket(normalizeMarket(mk));
+    } catch (_) {
+      // Keep the current board and current market. Never recreate the game here.
+    }
+  }
   async function boot(m = mode) {
     let lastErr;
     for (let attempt = 1; attempt <= 9; attempt++) {
@@ -372,14 +409,16 @@ export default function Home() {
         setGameId(d.game_id); setState(d.state); setDailyMode(false);
         reset(); setAnimGen(0); setBootMsg("");
         if (d.state?.marketLetters?.length > 0) {
-          setMarket({ active: d.state.marketLetters, preview: d.state.previewLetters||[],
-            stats: d.state.marketLetters.map(l=>({letter:l,wordCount:0,bestGain:0,bestWord:'',roles:[]})),
-            freeLetterUsed: !!d.state.freeLetterUsed });
-          setLetter('');
-          // Fetch stats non-blocking — failure must NOT trigger game retry
-          try { const mk = await getMarket(d.game_id); setMarket(mk); } catch(_) {}
+          setMarket(normalizeMarket({
+            active: d.state.marketLetters,
+            preview: d.state.previewLetters || [],
+            freeLetterUsed: !!d.state.freeLetterUsed,
+          }));
+          setLetter('');   // Clear selected letter — market controls it
+          await refreshMarket(d.game_id);
         }
         getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
+        getAlmost(d.game_id).then(setAlmost).catch(() => setAlmost([]));
         return;
       } catch(e) {
         lastErr = e;
@@ -397,13 +436,16 @@ export default function Home() {
     setGameId(d.game_id); setState(d.state); setDailyMode(true);
     reset(); setAnimGen(0);
     if (d.state?.marketLetters?.length > 0) {
-      setMarket({ active: d.state.marketLetters, preview: d.state.previewLetters||[],
-        stats: d.state.marketLetters.map(l=>({letter:l,wordCount:0,bestGain:0,bestWord:'',roles:[]})),
-        freeLetterUsed: !!d.state.freeLetterUsed });
+      setMarket(normalizeMarket({
+        active: d.state.marketLetters,
+        preview: d.state.previewLetters || [],
+        freeLetterUsed: !!d.state.freeLetterUsed,
+      }));
       setLetter('');
-      try { const mk = await getMarket(d.game_id); setMarket(mk); } catch(_) {}
+      await refreshMarket(d.game_id);
     }
     getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
+    getAlmost(d.game_id).then(setAlmost).catch(() => setAlmost([]));
   }
   useEffect(() => { boot().catch(e => setError(String(e))); }, []);
 
@@ -432,9 +474,12 @@ export default function Home() {
         const next = await botMove(gameId);
         if (cancelled) return;
         setState(next);
-        // Market stable during bot turns (bot not market-constrained)
+        // Bot does not consume the player's market, but the board changed,
+        // so recompute market stats against the new board.
         reset();
+        await refreshMarket(gameId);
         try { setSugg(await getSuggestions(gameId)); } catch(_) {}
+        try { setAlmost(await getAlmost(gameId)); } catch(_) {}
       } catch(e) {
         if (!cancelled) setError(e.message || "Bot failed");
       }
@@ -642,10 +687,14 @@ export default function Home() {
     try {
       const next = await submitMove({game_id:gameId,row:placed.row,col:placed.col,letter,path});
       setState(next);
-      // Update market from state immediately
-      if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
+      // Update market from state immediately, then refresh stats from backend.
+      if (next.marketLetters?.length > 0) setMarket(normalizeMarket({
+        active: next.marketLetters,
+        preview: next.previewLetters || [],
+        freeLetterUsed: next.freeLetterUsed || false,
+      }));
 
-      reset(); await refresh();
+      reset(); await refresh(); await refreshMarket(gameId);
       getAlmost(gameId).then(setAlmost).catch(()=>{});
     } catch(e) { setError(e.message||"Move failed"); }
   }
@@ -655,9 +704,13 @@ export default function Home() {
     try {
       const next = await seedMove(gameId,{row:placed.row,col:placed.col,letter});
       setState(next);
-      if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
+      if (next.marketLetters?.length > 0) setMarket(normalizeMarket({
+        active: next.marketLetters,
+        preview: next.previewLetters || [],
+        freeLetterUsed: next.freeLetterUsed || false,
+      }));
 
-      reset(); await refresh();
+      reset(); await refresh(); await refreshMarket(gameId);
       getAlmost(gameId).then(setAlmost).catch(()=>{});
     } catch(e) { setError(e.message||"Seed failed"); }
   }
@@ -771,7 +824,7 @@ export default function Home() {
       {tutTurns === 0 && human() && (
         <div className="firstmove-banner">
           <strong>How to play:</strong>{" "}
-          Tap a <span className="fm-green">green square</span> → type a letter → connect letters to make a word → press <strong>Capture Word</strong>
+          Choose a <strong>Letter Market</strong> tile → tap a <span className="fm-green">green square</span> → connect letters to make a word → press <strong>Capture Word</strong>
         </div>
       )}
       {/* ── score bar ── */}
@@ -793,7 +846,7 @@ export default function Home() {
         <div className="rules">
           <strong>Build words from a shared draft. Place letters. Capture territory.</strong>
           <ol>
-            <li>Tap a <em>green square</em> → type any letter → connect letters to make a 3–6 letter word → press <strong>Capture Word ⚔</strong>.</li>
+            <li>Choose one tile from the <strong>Letter Market</strong> → tap a <em>green square</em> → connect letters to make a 3–6 letter word → press <strong>Capture Word ⚔</strong>.</li>
             <li>Example: board has D–S–T, place U → select D→U→S→T → DUST! Your letter can go anywhere in the path.</li>
             <li>Enclose opponent cells to <strong>capture</strong> them. Surrounded own cells become 🏰 <strong>Fortified</strong>.</li>
             <li><strong>Role Bonuses</strong> — earn extra territory: BRIDGE +3T · CUT +2T · CROSS WORD +2T · POWER WORD +1T</li>
@@ -837,29 +890,38 @@ export default function Home() {
               <div className="lm-header">
                 <span className="lm-title">🎴 Letter Market</span>
                 <span className="lm-preview">
-                  Next: {market.preview.map((l,i) => <span key={i} className="lm-prev-chip">{l}</span>)}
+                  Next: {market.preview.map((l,i) => {
+                    const hit = almost.some(a => a.needs === l);
+                    return <span key={i} className={`lm-prev-chip ${hit ? 'lm-next-hit' : ''}`} title={hit ? 'Completes an Almost word' : 'Upcoming letter'}>{l}</span>;
+                  })}
                 </span>
               </div>
               <div className="lm-active">
-                {market.stats.map((s,i) => (
-                  <button key={i}
-                    className={`lm-tile ${letter===s.letter ? 'lm-selected' : ''}`}
-                    onClick={() => { setLetter(s.letter); setPath([]); setPlaced(null); setError(''); setPreview(null); }}
-                    disabled={!human()}
-                    title={s.bestWord ? `Best: ${s.bestWord} +${s.bestGain}T` : 'No words available'}
-                  >
-                    <span className="lm-letter">{s.letter}</span>
-                    {s.wordCount > 0 ? (
+                {market.stats.map((s,i) => {
+                  const kind = marketLabel(s, i);
+                  const isSetup = kind === 'SETUP';
+                  const title = s.bestWord
+                    ? `${kind}: ${s.bestWord} +${s.bestGain}T`
+                    : (s.setupWord ? `${kind}: completes ${s.setupWord}` : `${kind}: setup letter`);
+                  return (
+                    <button key={i}
+                      className={`lm-tile lm-${kind.toLowerCase()} ${letter===s.letter ? 'lm-selected' : ''}`}
+                      onClick={() => { setLetter(s.letter); setPath([]); setPlaced(null); setError(''); setPreview(null); }}
+                      disabled={!human()}
+                      title={title}
+                    >
+                      <span className="lm-kind">{kind}</span>
+                      <span className="lm-letter">{s.letter}</span>
                       <span className="lm-stats">
                         {s.bestGain > 0 && <span className="lm-gain">+{s.bestGain}T</span>}
                         {s.wordCount > 0 && <span className="lm-count">{s.wordCount}w</span>}
                         {s.roles?.length > 0 && <span className="lm-role">{s.roles[0].substring(0,3)}</span>}
+                        {s.wordCount === 0 && <span className="lm-zero">{isSetup ? 'setup' : 'no word'}</span>}
                       </span>
-                    ) : (
-                      <span className="lm-stats"><span className="lm-zero" style={{fontSize:10}}>no words</span></span>
-                    )}
-                  </button>
-                ))}
+                      {(s.bestWord || s.setupWord) && <span className="lm-best">{s.bestWord || `→ ${s.setupWord}`}</span>}
+                    </button>
+                  );
+                })}
                 {/* Free Letter (Wild) */}
                 {!market.freeLetterUsed ? (
                   <button className={`lm-tile lm-free ${showFreeInput ? 'lm-selected' : ''}`}
@@ -886,7 +948,7 @@ export default function Home() {
                     onKeyDown={e => {
                       if(e.key==='Enter' && freeLetter) {
                         useFreeLetter(gameId, freeLetter).then(r => {
-                          setMarket(m => ({...m, ...r}));
+                          setMarket(m => normalizeMarket({...m, ...r}));
                           setLetter(freeLetter);
                           setShowFreeInput(false);
                           setPath([]); setPlaced(null);
@@ -898,7 +960,7 @@ export default function Home() {
                     onClick={() => {
                       if(!freeLetter) return;
                       useFreeLetter(gameId, freeLetter).then(r => {
-                        setMarket(m => ({...m, ...r}));
+                        setMarket(m => normalizeMarket({...m, ...r}));
                         setLetter(freeLetter);
                         setShowFreeInput(false);
                         setPath([]); setPlaced(null);
@@ -940,7 +1002,7 @@ export default function Home() {
                 ):(
                   <div className="pvhint">
                     {!placed
-                      ? (market.active.length > 0 ? "Choose a letter above ↑ then tap a green square." : "Tap a green square to place a letter.")
+                      ? (market.active.length > 0 ? "Choose a Letter Market tile above, then tap a green square." : "Tap a green square to place a letter.")
                       : !letter
                       ? "Type one letter."
                       : path.length < 2
@@ -952,6 +1014,22 @@ export default function Home() {
                 )}
               </div>
             </div>
+            {letter && market.stats.length > 0 && (
+              <div className="selected-insight">
+                {(() => {
+                  const s = market.stats.find(x => x.letter === letter);
+                  if (!s) return null;
+                  return (
+                    <>
+                      <strong>{letter}</strong>
+                      {s.bestWord
+                        ? <> — {marketLabel(s, market.stats.indexOf(s))}: best <strong>{s.bestWord}</strong> (+{s.bestGain}T, {s.wordCount} words)</>
+                        : <> — setup letter{s.setupWord ? <>: aims for <strong>{s.setupWord}</strong></> : <>. Use it to prepare a future word.</>}</>}
+                    </>
+                  );
+                })()}
+              </div>
+            )}
             <div className="brow">
               <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word ⚔" : "Submit"}</button>
               {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()}>Seed</button>}
@@ -967,11 +1045,14 @@ export default function Home() {
             <div className="almost-box">
               <div className="almost-title">🀄 Almost — place one letter to make:</div>
               <div className="almost-list">
-                {almost.map((a,i) => (
-                  <span key={i} className="almost-chip">
-                    +<strong>{a.needs}</strong> → {a.word}
-                  </span>
-                ))}
+                {almost.map((a,i) => {
+                  const inNext = market.preview.includes(a.needs);
+                  return (
+                    <span key={i} className={`almost-chip ${inNext ? 'almost-next' : ''}`} title={inNext ? 'This letter is visible in Next' : 'One-letter-away word'}>
+                      +<strong>{a.needs}</strong> → {a.word}{inNext ? <em> next</em> : null}
+                    </span>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -981,7 +1062,7 @@ export default function Home() {
             </div>
             {showSuggest&&(
               <div className="chips sc">
-                {[...new Set(suggestions)].length?[...new Set(suggestions)].map(w=><span key={w} className="chip">{w}</span>):<div className="no-word-hint">No playable word found.<br/>Use <strong>Seed</strong> to place a tile without capturing.</div>}
+                {[...new Set(suggestions)].length ? [...new Set(suggestions)].slice(0, 15).map(w => <span key={w} className="chip">{w}</span>) : <div className="no-word-hint">No clean word found yet.<br/>Use <strong>Seed</strong> as a setup move, not a penalty.</div>}
               </div>
             )}
           </div>
@@ -1169,6 +1250,18 @@ export default function Home() {
       .lm-tile:disabled{opacity:.5;cursor:default}
       .lm-selected{background:#eef2ff!important;border-color:#6366f1!important;box-shadow:0 0 0 2px #a5b4fc}
       .lm-letter{font-size:22px;font-weight:900;color:#111;line-height:1}
+
+      .lm-kind{font-size:9px;font-weight:900;letter-spacing:.4px;color:#777;line-height:1}
+      .lm-best{font-size:10px;color:#555;max-width:68px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .lm-safe{border-color:#93c5fd}
+      .lm-power{border-color:#fbbf24;background:#fffdf2}
+      .lm-setup{border-color:#c4b5fd;background:#faf5ff}
+      .lm-tactic{border-color:#bae6fd}
+      .lm-next-hit{background:#fff4cc!important;border:1px solid #e0b100;color:#8a5a00}
+      .almost-chip.almost-next{background:#fff4cc;border-color:#e0b100;font-weight:700}
+      .almost-chip em{font-style:normal;color:#9a6700;font-size:10px;margin-left:3px}
+      .selected-insight{background:#f7f9fc;border:1px dashed #cbd5e1;border-radius:10px;padding:7px 10px;margin:0 0 10px 60px;font-size:12px;color:#475569}
+      .selected-insight strong{color:#111}
       .lm-stats{display:flex;gap:3px;align-items:center;flex-wrap:wrap;justify-content:center}
       .lm-gain{background:#dcfce7;color:#166534;border-radius:4px;padding:1px 5px;font-size:11px;font-weight:700}
       .lm-count{background:#e0f2fe;color:#075985;border-radius:4px;padding:1px 5px;font-size:11px;font-weight:600}
