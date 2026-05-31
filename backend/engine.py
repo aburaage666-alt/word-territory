@@ -246,24 +246,25 @@ def _letter_enables_word(state: GameState, letter: str, max_check: int = 8) -> b
 
 
 def _letter_best_stats(state: GameState, letter: str) -> dict:
-    """Return {word_count, best_gain, best_word, roles} for one letter."""
+    """Return {word_count, best_gain, best_word, roles} for one letter.
+    Lightweight — no simulate_move, uses path-length estimate for gain.
+    """
     excluded = set(state.usedWords)
     moves = _fast_bot_moves_for_letter(state, letter, max_results=8, excluded=excluded)
     if not moves:
-        return {"wordCount": 0, "bestGain": 0, "bestWord": "", "roles": []}
+        return {"wordCount": len(moves), "bestGain": 0, "bestWord": "", "roles": []}
     best = max(moves, key=lambda m: m.get("territory_gain", 0))
+    # Quick role detection without simulate_move
     roles = []
     for m in moves[:3]:
-        ns = simulate_move(state, m)
-        last = ns.moveHistory[-1]
-        for lbl in (last.comboLabels or []):
-            if lbl not in roles:
-                roles.append(lbl)
+        w = m.get("word", "")
+        if len(w) >= 5 and "POWER WORD" not in roles:
+            roles.append("POWER WORD")
     return {
         "wordCount": len(moves),
         "bestGain":  best.get("territory_gain", 0),
         "bestWord":  best.get("word", ""),
-        "roles":     roles[:3],
+        "roles":     roles[:2],
     }
 
 
