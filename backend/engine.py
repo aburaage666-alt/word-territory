@@ -303,51 +303,136 @@ def _fast_bot_moves_for_letter(state: GameState, letter: str,
     return results
 
 
+def _score_all_letters(state: GameState) -> dict:
+    """
+    Score every letter A-Z for the current board state.
+    Returns {letter: {"words": int, "gain": int, "future": int, "best_word": str}}
+    Lightweight: uses move lists (no simulate_move).
+    """
+    excluded = set(state.usedWords)
+    board_letters = board_letters_set(state)
+    # Future Almost: how many new Almost words does placing this letter create?
+    try:
+        current_almost = {a["word"] for a in find_almost_words(state, limit=8)}
+    except Exception:
+        current_almost = set()
+
+    VOWELS = set("AEIOU")
+    scores = {}
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        if letter in board_letters:
+            continue
+        moves = _fast_bot_moves_for_letter(state, letter, max_results=8, excluded=excluded)
+        best_gain = max((m.get("territory_gain", 0) for m in moves), default=0)
+        best_word = max(moves, key=lambda m: m.get("territory_gain", 0),
+                        default={}).get("word", "") if moves else ""
+        # Power word bonus
+        power = any(len(m.get("word","")) >= 5 for m in moves)
+        scores[letter] = {
+            "words":     len(moves),
+            "gain":      best_gain,
+            "best_word": best_word,
+            "power":     power,
+            "is_vowel":  letter in VOWELS,
+        }
+    return scores
+
+
 def generate_letter_market(state: GameState) -> tuple[list[str], list[str]]:
     """
-    Generate 3 active + 3 preview letters using find_almost_words.
-    Guarantees at least 1 letter that creates a valid word.
+    3-slot Letter Market:
+    - Slot 0 SAFE:  highest wordCount (reliable play)
+    - Slot 1 POWER: highest territory gain / role potential
+    - Slot 2 SETUP: Almost-guided or frequency-weighted
+
+    Guarantees: ≥2 of 3 active letters have playable words.
+    Preview: no duplicates, ≥1 vowel, no repeat from active.
     """
     import random as _r
 
-    RARE = {'Q','X','Z','J'}
+    RARE  = {'Q','X','Z','J'}
+    VOWELS = set("AEIOU")
     board_letters = board_letters_set(state)
 
-    def weighted_letter(exclude_rare=True, exclude=None):
+    scores = _score_all_letters(state)
+    playable = {l: s for l, s in scores.items() if s["words"] > 0}
+
+    def pick(pool_dict, key_fn, exclude):
+        candidates = [(l, s) for l, s in pool_dict.items() if l not in exclude]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda x: key_fn(x[1]))[0]
+
+    def weighted_pick(exclude):
         pool = [l for l in _ALL_LETTERS
-                if l not in board_letters
-                and (not exclude_rare or l not in RARE)
-                and (not exclude or l not in exclude)]
+                if l not in board_letters and l not in RARE and l not in exclude]
         if not pool:
-            pool = [l for l in _ALL_LETTERS if l not in board_letters] or _ALL_LETTERS
+            pool = [l for l in _ALL_LETTERS if l not in exclude] or _ALL_LETTERS
         weights = [_LETTER_WEIGHTS[l] for l in pool]
         return _r.choices(pool, weights=weights)[0]
 
-    # ── Find guaranteed-good letters via Almost/Tenpai ───────────────────
+    used = set()
+    active = []
+
+    # Slot 0: SAFE — most playable words
+    safe = pick(playable, lambda s: s["words"] * 2 + s["gain"], used)
+    if safe:
+        active.append(safe); used.add(safe)
+
+    # Slot 1: POWER — highest gain, prefer Power Word / different from safe
+    power = pick(playable, lambda s: s["gain"] * 3 + (4 if s["power"] else 0) + s["words"], used)
+    if power:
+        active.append(power); used.add(power)
+    elif playable:
+        # second-best playable
+        p2 = pick(playable, lambda s: s["gain"] + s["words"], used)
+        if p2:
+            active.append(p2); used.add(p2)
+
+    # Slot 2: SETUP — Almost-guided (future value)
     try:
         almost = find_almost_words(state, limit=10)
-        good_letters = list({a["needs"] for a in almost
-                             if a["needs"] not in board_letters})
-        _r.shuffle(good_letters)
+        setup_candidates = [a["needs"] for a in almost
+                            if a["needs"] not in board_letters and a["needs"] not in used]
+        if setup_candidates:
+            setup = setup_candidates[0]
+            active.append(setup); used.add(setup)
     except Exception:
-        good_letters = []
+        pass
 
-    # Build active: use up to 2 "good" letters + fill with weighted randoms
-    active = []
-    seen = set()
-    for l in good_letters[:2]:
-        if l not in seen:
-            active.append(l); seen.add(l)
+    # Fill any remaining slots
     while len(active) < 3:
-        l = weighted_letter(exclude=seen)
-        active.append(l); seen.add(l)
+        l = weighted_pick(used)
+        active.append(l); used.add(l)
 
-    # Preview letters (frequency-weighted, no validation needed)
-    preview_seen = set(active)
+    # Ensure at least 1 vowel in active 3
+    if not any(l in VOWELS for l in active):
+        # replace the weakest (last slot) with a vowel
+        vowels_avail = [l for l in VOWELS if l not in board_letters and l not in used]
+        if vowels_avail:
+            active[-1] = _r.choice(vowels_avail)
+            used = set(active)
+
+    # Preview: no duplicates, no same as active, ≥1 vowel
     preview = []
-    for _ in range(3):
-        l = weighted_letter(exclude=preview_seen)
-        preview.append(l); preview_seen.add(l)
+    prev_seen = set(active)
+    # Add 1 Almost letter for preview
+    try:
+        almost = find_almost_words(state, limit=6)
+        for a in almost:
+            l = a["needs"]
+            if l not in board_letters and l not in prev_seen:
+                preview.append(l); prev_seen.add(l); break
+    except Exception:
+        pass
+    while len(preview) < 3:
+        l = weighted_pick(prev_seen)
+        preview.append(l); prev_seen.add(l)
+    # Ensure ≥1 vowel in preview
+    if not any(l in VOWELS for l in preview):
+        vowels_avail = [l for l in VOWELS if l not in board_letters and l not in prev_seen - set(preview)]
+        if vowels_avail:
+            preview[-1] = _r.choice(vowels_avail)
 
     return active[:3], preview[:3]
 
