@@ -46,6 +46,9 @@ from engine import (
     build_initial_state,
     find_candidate_words,
     find_almost_words,
+    generate_letter_market,
+    advance_market,
+    get_market_stats,
     pass_turn,
     preview_move,
     validate_and_apply_move,
@@ -295,6 +298,42 @@ def get_daily_leaderboard():
         totalPlayers=total,
         entries=entries,
     )
+
+
+# ── Letter Market endpoints ──────────────────────────────────────────────────
+
+@app.get("/games/{game_id}/market")
+def get_market(game_id: str):
+    """Return current Letter Market with per-letter stats."""
+    state = GAMES.get(game_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Game not found")
+    stats = get_market_stats(state)
+    return {
+        "active":  state.marketLetters,
+        "preview": state.previewLetters,
+        "stats":   stats,
+        "freeLetterUsed": state.freeLetterUsed,
+    }
+
+
+@app.post("/games/{game_id}/free-letter")
+def use_free_letter(game_id: str, req: dict):
+    """Use the Free Letter (Wild) once per game."""
+    state = GAMES.get(game_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if state.freeLetterUsed:
+        raise HTTPException(status_code=400, detail="Free letter already used this game")
+    letter = req.get("letter", "").upper()
+    if not letter or len(letter) != 1 or not letter.isalpha():
+        raise HTTPException(status_code=400, detail="Invalid letter")
+    # Add letter to active market temporarily (replaces slot 0)
+    state.freeLetterUsed = True
+    if letter not in state.marketLetters:
+        state.marketLetters = [letter] + state.marketLetters[:2]
+    return {"active": state.marketLetters, "preview": state.previewLetters,
+            "freeLetterUsed": True}
 
 
 # ── Almost / Tenpai endpoint ─────────────────────────────────────────────────
