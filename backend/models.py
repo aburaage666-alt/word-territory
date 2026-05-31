@@ -62,7 +62,10 @@ class GameState(BaseModel):
     lastCapturedCells: List[Coord] = []
     lastFortifiedCells: List[Coord] = []
     lastComboLabels: List[str] = []
-    # (Draft system removed — free letter placement restored)
+    # ── Letter Market ──────────────────────────────────────────────────────
+    marketLetters: List[str] = []      # 3 active letters to choose from
+    previewLetters: List[str] = []     # next 3 letters coming
+    freeLetterUsed: bool = False       # Wild letter (once per game)
 
 
 class CreateGameRequest(BaseModel):
