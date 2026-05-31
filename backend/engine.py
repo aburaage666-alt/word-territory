@@ -305,28 +305,38 @@ def _fast_bot_moves_for_letter(state: GameState, letter: str,
 
 def _score_all_letters(state: GameState) -> dict:
     """
-    Score every letter A-Z for the current board state.
-    Returns {letter: {"words": int, "gain": int, "future": int, "best_word": str}}
-    Lightweight: uses move lists (no simulate_move).
+    Score candidate letters for the current board state.
+    Only checks Almost-guided letters + top-weighted commons (not all 26).
+    Fast: ~5-10ms per call.
     """
+    import heapq as _hq
     excluded = set(state.usedWords)
     board_letters = board_letters_set(state)
-    # Future Almost: how many new Almost words does placing this letter create?
-    try:
-        current_almost = {a["word"] for a in find_almost_words(state, limit=8)}
-    except Exception:
-        current_almost = set()
-
     VOWELS = set("AEIOU")
+
+    # Candidate set: Almost letters + top 12 by frequency, minus board letters
+    try:
+        almost_letters = {a["needs"] for a in find_almost_words(state, limit=8)}
+    except Exception:
+        almost_letters = set()
+
+    top_freq = sorted(
+        [l for l in _ALL_LETTERS if l not in board_letters],
+        key=lambda l: -_LETTER_WEIGHTS[l]
+    )[:12]
+
+    candidates = list((almost_letters | set(top_freq)) - board_letters)
+    # Always include common vowels if not on board
+    for v in "AEIOU":
+        if v not in board_letters and v not in candidates:
+            candidates.append(v)
+
     scores = {}
-    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-        if letter in board_letters:
-            continue
-        moves = _fast_bot_moves_for_letter(state, letter, max_results=8, excluded=excluded)
+    for letter in candidates:
+        moves = _fast_bot_moves_for_letter(state, letter, max_results=6, excluded=excluded)
         best_gain = max((m.get("territory_gain", 0) for m in moves), default=0)
         best_word = max(moves, key=lambda m: m.get("territory_gain", 0),
                         default={}).get("word", "") if moves else ""
-        # Power word bonus
         power = any(len(m.get("word","")) >= 5 for m in moves)
         scores[letter] = {
             "words":     len(moves),
