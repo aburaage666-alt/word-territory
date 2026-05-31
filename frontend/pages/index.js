@@ -375,6 +375,7 @@ export default function Home() {
           setMarket({ active: d.state.marketLetters, preview: d.state.previewLetters||[],
             stats: d.state.marketLetters.map(l=>({letter:l,wordCount:0,bestGain:0,bestWord:'',roles:[]})),
             freeLetterUsed: !!d.state.freeLetterUsed });
+          setLetter('');   // Clear selected letter — market controls it
           getMarket(d.game_id).then(setMarket).catch(() => {});
         }
         getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
@@ -398,6 +399,7 @@ export default function Home() {
       setMarket({ active: d.state.marketLetters, preview: d.state.previewLetters||[],
         stats: d.state.marketLetters.map(l=>({letter:l,wordCount:0,bestGain:0,bestWord:'',roles:[]})),
         freeLetterUsed: !!d.state.freeLetterUsed });
+      setLetter('');
       getMarket(d.game_id).then(setMarket).catch(() => {});
     }
     getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
@@ -913,10 +915,14 @@ export default function Home() {
           <div className="mpanel">
             <div className="mrow">
               <label className="mlbl">{market.active.length > 0 ? "Selected" : "Letter"}</label>
-              <input ref={letterRef} className="minput" value={letter} maxLength={1}
+              <input ref={letterRef}
+                className={`minput${market.active.length > 0 && !letter ? ' minput-empty' : ''}`}
+                value={letter} maxLength={1}
                 disabled={!human()}
-                onChange={e=>setLetter(e.target.value.toUpperCase().slice(0,1))}
-                placeholder="A"
+                readOnly={market.active.length > 0}
+                onChange={e=>{ if(market.active.length===0) setLetter(e.target.value.toUpperCase().slice(0,1)); }}
+                placeholder={market.active.length > 0 ? "—" : "A"}
+                style={market.active.length > 0 && !letter ? {color:'#ccc'} : {}}
               />
               <div className={`pvbox ${ok?"pvok":""}`}>
                 <div className="pvword">{currentWord||"—"}</div>
@@ -935,7 +941,7 @@ export default function Home() {
                 ):(
                   <div className="pvhint">
                     {!placed
-                      ? "Tap a green square to place a letter."
+                      ? {market.active.length > 0 ? "Choose a letter above ↑ then tap a green square." : "Tap a green square to place a letter."}
                       : !letter
                       ? "Type one letter."
                       : path.length < 2
@@ -1233,6 +1239,7 @@ export default function Home() {
       .htile-dim{opacity:.35;cursor:not-allowed}
       .hand-hidden-input{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}
       /* legacy input fallback */
+      .minput-empty::placeholder{color:#bbb}
       .minput{width:50px;height:48px;border:2px solid #ccc;border-radius:10px;font-size:22px;font-weight:800;text-align:center;outline:none;text-transform:uppercase;flex-shrink:0}
       .minput:focus{border-color:#111}.minput:disabled{background:#f4f4f4}
       .pvbox{flex:1;background:#f7f9fc;border:1px solid #e2e8f0;border-radius:12px;padding:10px;min-height:60px}
