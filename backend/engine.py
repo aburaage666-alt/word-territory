@@ -898,8 +898,8 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     if is_game_over(temp):
         temp.winner = decide_winner(temp)
 
-    # Advance Letter Market
-    if temp.marketLetters:
+    # Advance Letter Market — only for human player moves (flag=True)
+    if advance_market_flag and temp.marketLetters:
         new_active, new_preview = advance_market(temp, letter)
         temp.marketLetters  = new_active
         temp.previewLetters = new_preview
@@ -942,8 +942,8 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str, advance_m
     temp.recentMoves = [f"{player}: SEED ({letter.upper()})"] + temp.recentMoves[:4]
     if is_game_over(temp):
         temp.winner = decide_winner(temp)
-    # Advance market
-    if temp.marketLetters:
+    # Advance market — only for human player moves (flag=True)
+    if advance_market_flag and temp.marketLetters:
         new_active, new_preview = advance_market(temp, letter.upper())
         temp.marketLetters  = new_active
         temp.previewLetters = new_preview
