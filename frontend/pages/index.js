@@ -331,6 +331,9 @@ export default function Home() {
   const [myRank,      setMyRank]      = useState(null);
   const [submitted,   setSubmitted]   = useState(false);
   const [almost,      setAlmost]      = useState([]);
+  const [market,      setMarket]      = useState({ active:[], preview:[], stats:[], freeLetterUsed:false });
+  const [freeLetter,  setFreeLetter]  = useState('');
+  const [showFreeInput, setShowFreeInput] = useState(false);
   // Tutorial UX: track how many turns have been played
   const tutTurns = (state?.moveHistory?.length || 0);
   const isTutorial = tutTurns < 3;  // first 3 turns = beginner mode
@@ -624,6 +627,7 @@ export default function Home() {
 
       reset(); await refresh();
       getAlmost(gameId).then(setAlmost).catch(()=>{});
+      getMarket(gameId).then(setMarket).catch(()=>{});
     } catch(e) { setError(e.message||"Move failed"); }
   }
   async function seed() {
@@ -635,6 +639,7 @@ export default function Home() {
 
       reset(); await refresh();
       getAlmost(gameId).then(setAlmost).catch(()=>{});
+      getMarket(gameId).then(setMarket).catch(()=>{});
     } catch(e) { setError(e.message||"Seed failed"); }
   }
   async function pass() {
@@ -806,6 +811,85 @@ export default function Home() {
             </div>
           </div>
           </div>
+
+          {/* ── Letter Market ── */}
+          {market.active.length > 0 && !state.winner && (
+            <div className="lm-panel">
+              <div className="lm-header">
+                <span className="lm-title">🎴 Letter Market</span>
+                <span className="lm-preview">
+                  Next: {market.preview.map((l,i) => <span key={i} className="lm-prev-chip">{l}</span>)}
+                </span>
+              </div>
+              <div className="lm-active">
+                {market.stats.map((s,i) => (
+                  <button key={i}
+                    className={`lm-tile ${letter===s.letter ? 'lm-selected' : ''}`}
+                    onClick={() => { setLetter(s.letter); setPath([]); setPlaced(null); setError(''); setPreview(null); }}
+                    disabled={!human()}
+                    title={s.bestWord ? `Best: ${s.bestWord} +${s.bestGain}T` : 'No words available'}
+                  >
+                    <span className="lm-letter">{s.letter}</span>
+                    {s.wordCount > 0 ? (
+                      <span className="lm-stats">
+                        <span className="lm-gain">+{s.bestGain}T</span>
+                        <span className="lm-count">{s.wordCount}w</span>
+                        {s.roles.length > 0 && <span className="lm-role">{s.roles[0].substring(0,3)}</span>}
+                      </span>
+                    ) : (
+                      <span className="lm-stats"><span className="lm-zero">–</span></span>
+                    )}
+                  </button>
+                ))}
+                {/* Free Letter (Wild) */}
+                {!market.freeLetterUsed ? (
+                  <button className={`lm-tile lm-free ${showFreeInput ? 'lm-selected' : ''}`}
+                    onClick={() => setShowFreeInput(v => !v)}
+                    disabled={!human()}
+                    title="Use once per game — choose any letter"
+                  >
+                    <span className="lm-letter">⭐</span>
+                    <span className="lm-stats"><span className="lm-freeLabel">FREE</span></span>
+                  </button>
+                ) : (
+                  <div className="lm-tile lm-free lm-used" title="Free letter already used">
+                    <span className="lm-letter" style={{opacity:0.3}}>⭐</span>
+                    <span className="lm-stats"><span className="lm-zero">USED</span></span>
+                  </div>
+                )}
+              </div>
+              {showFreeInput && (
+                <div className="lm-free-row">
+                  <input className="lm-free-input" maxLength={1}
+                    placeholder="Type any letter"
+                    value={freeLetter}
+                    onChange={e => setFreeLetter(e.target.value.toUpperCase().replace(/[^A-Z]/g,''))}
+                    onKeyDown={e => {
+                      if(e.key==='Enter' && freeLetter) {
+                        useFreeLetter(gameId, freeLetter).then(r => {
+                          setMarket(m => ({...m, ...r}));
+                          setLetter(freeLetter);
+                          setShowFreeInput(false);
+                          setPath([]); setPlaced(null);
+                        }).catch(e => setError(e.message));
+                      }
+                    }}
+                  />
+                  <button className="lm-free-confirm"
+                    onClick={() => {
+                      if(!freeLetter) return;
+                      useFreeLetter(gameId, freeLetter).then(r => {
+                        setMarket(m => ({...m, ...r}));
+                        setLetter(freeLetter);
+                        setShowFreeInput(false);
+                        setPath([]); setPlaced(null);
+                      }).catch(e => setError(e.message));
+                    }}
+                  >Use ⭐</button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* move controls */}
           <div className="mpanel">
@@ -1048,6 +1132,36 @@ export default function Home() {
       .cell[data-chg]{animation:aclaim 500ms ease forwards}
       .cell[data-cap]{animation:acap 800ms ease forwards}
       .cell[data-lk]{animation:alk 600ms ease forwards}
+      /* ── Letter Market ─────────────────────────────────────────────────── */
+      .lm-panel{background:#fff;border:1.5px solid #e0e0e0;border-radius:14px;padding:10px 14px;margin-bottom:10px}
+      .lm-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+      .lm-title{font-size:13px;font-weight:800;color:#333;letter-spacing:.3px}
+      .lm-preview{display:flex;align-items:center;gap:4px;font-size:12px;color:#999}
+      .lm-prev-chip{background:#f0f0f0;border-radius:6px;padding:1px 7px;font-weight:700;color:#666;font-size:13px}
+      .lm-active{display:flex;gap:8px;flex-wrap:wrap}
+      .lm-tile{background:#f8f9fa;border:2px solid #e0e0e0;border-radius:12px;padding:8px 10px;
+               min-width:60px;cursor:pointer;transition:all .15s;display:flex;flex-direction:column;
+               align-items:center;gap:2px;font-family:inherit}
+      .lm-tile:hover:not(:disabled){background:#eef2ff;border-color:#6366f1;transform:translateY(-1px)}
+      .lm-tile:disabled{opacity:.5;cursor:default}
+      .lm-selected{background:#eef2ff!important;border-color:#6366f1!important;box-shadow:0 0 0 2px #a5b4fc}
+      .lm-letter{font-size:22px;font-weight:900;color:#111;line-height:1}
+      .lm-stats{display:flex;gap:3px;align-items:center;flex-wrap:wrap;justify-content:center}
+      .lm-gain{background:#dcfce7;color:#166534;border-radius:4px;padding:1px 5px;font-size:11px;font-weight:700}
+      .lm-count{background:#e0f2fe;color:#075985;border-radius:4px;padding:1px 5px;font-size:11px;font-weight:600}
+      .lm-role{background:#fef9c3;color:#713f12;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700}
+      .lm-zero{color:#aaa;font-size:11px}
+      .lm-free{background:#fffbeb;border-color:#fbbf24}
+      .lm-free:hover:not(:disabled){background:#fef3c7!important;border-color:#d97706!important}
+      .lm-freeLabel{background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 5px;font-size:11px;font-weight:800}
+      .lm-used{opacity:.4;cursor:default!important}
+      .lm-free-row{display:flex;gap:8px;margin-top:8px;align-items:center}
+      .lm-free-input{border:2px solid #fbbf24;border-radius:8px;padding:6px 10px;font-size:18px;
+                     font-weight:900;width:80px;text-align:center;text-transform:uppercase;outline:none}
+      .lm-free-confirm{background:#f59e0b;color:#fff;border:none;border-radius:8px;padding:6px 14px;
+                       font-weight:800;cursor:pointer;font-size:13px}
+      .lm-free-confirm:hover{background:#d97706}
+
       /* Tenpai / Almost UI */
       .almost-box{background:#fffdf0;border:1.5px solid #f0c040;border-radius:12px;padding:8px 12px;margin-bottom:8px}
       .almost-title{font-size:11px;font-weight:800;color:#b08000;margin-bottom:6px;letter-spacing:.3px}
