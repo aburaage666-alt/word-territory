@@ -73,8 +73,19 @@ export async function botMove(gameId) {
   return readJson(res);
 }
 
-export async function skipDraft(gameId) {
-  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/skip-draft`, { method: "POST" });
+export async function getMarket(gameId) {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/market`, {}, 5000);
+    return readJson(res);
+  } catch { return { active: [], preview: [], stats: [], freeLetterUsed: false }; }
+}
+
+export async function useFreeLetter(gameId, letter) {
+  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/free-letter`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ letter }),
+  });
   return readJson(res);
 }
 
