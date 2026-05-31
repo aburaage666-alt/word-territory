@@ -2,7 +2,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard, getAlmost,
+  botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard, getAlmost, getMarket,
   getSuggestions, joinWaitlist, passTurn, previewMove, seedMove,
   submitDailyScore, submitMove,
 } from "../lib/api";
@@ -375,8 +375,9 @@ export default function Home() {
           setMarket({ active: d.state.marketLetters, preview: d.state.previewLetters||[],
             stats: d.state.marketLetters.map(l=>({letter:l,wordCount:0,bestGain:0,bestWord:'',roles:[]})),
             freeLetterUsed: !!d.state.freeLetterUsed });
-          setLetter('');   // Clear selected letter — market controls it
-          getMarket(d.game_id).then(setMarket).catch(() => {});
+          setLetter('');
+          // Fetch stats non-blocking — failure must NOT trigger game retry
+          try { const mk = await getMarket(d.game_id); setMarket(mk); } catch(_) {}
         }
         getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
         return;
@@ -400,7 +401,7 @@ export default function Home() {
         stats: d.state.marketLetters.map(l=>({letter:l,wordCount:0,bestGain:0,bestWord:'',roles:[]})),
         freeLetterUsed: !!d.state.freeLetterUsed });
       setLetter('');
-      getMarket(d.game_id).then(setMarket).catch(() => {});
+      try { const mk = await getMarket(d.game_id); setMarket(mk); } catch(_) {}
     }
     getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
   }
@@ -939,7 +940,7 @@ export default function Home() {
                 ):(
                   <div className="pvhint">
                     {!placed
-                      ? {market.active.length > 0 ? "Choose a letter above ↑ then tap a green square." : "Tap a green square to place a letter."}
+                      ? (market.active.length > 0 ? "Choose a letter above ↑ then tap a green square." : "Tap a green square to place a letter.")
                       : !letter
                       ? "Type one letter."
                       : path.length < 2
