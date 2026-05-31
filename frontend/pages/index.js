@@ -850,12 +850,12 @@ export default function Home() {
                     <span className="lm-letter">{s.letter}</span>
                     {s.wordCount > 0 ? (
                       <span className="lm-stats">
-                        <span className="lm-gain">+{s.bestGain}T</span>
-                        <span className="lm-count">{s.wordCount}w</span>
-                        {s.roles.length > 0 && <span className="lm-role">{s.roles[0].substring(0,3)}</span>}
+                        {s.bestGain > 0 && <span className="lm-gain">+{s.bestGain}T</span>}
+                        {s.wordCount > 0 && <span className="lm-count">{s.wordCount}w</span>}
+                        {s.roles?.length > 0 && <span className="lm-role">{s.roles[0].substring(0,3)}</span>}
                       </span>
                     ) : (
-                      <span className="lm-stats"><span className="lm-zero">–</span></span>
+                      <span className="lm-stats"><span className="lm-zero" style={{fontSize:10}}>no words</span></span>
                     )}
                   </button>
                 ))}
