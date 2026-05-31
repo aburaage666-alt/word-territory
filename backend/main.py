@@ -308,7 +308,12 @@ def get_market(game_id: str):
     state = GAMES.get(game_id)
     if not state:
         raise HTTPException(status_code=404, detail="Game not found")
-    stats = get_market_stats(state)
+    # Stats are best-effort — never let them block the market from loading
+    try:
+        stats = get_market_stats(state)
+    except Exception:
+        stats = [{"letter": l, "wordCount": 0, "bestGain": 0, "bestWord": "", "roles": []}
+                 for l in state.marketLetters]
     return {
         "active":  state.marketLetters,
         "preview": state.previewLetters,
