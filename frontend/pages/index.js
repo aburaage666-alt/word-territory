@@ -646,7 +646,6 @@ export default function Home() {
 
       reset(); await refresh();
       getAlmost(gameId).then(setAlmost).catch(()=>{});
-      getMarket(gameId).then(setMarket).catch(()=>{});
     } catch(e) { setError(e.message||"Move failed"); }
   }
   async function seed() {
@@ -659,7 +658,6 @@ export default function Home() {
 
       reset(); await refresh();
       getAlmost(gameId).then(setAlmost).catch(()=>{});
-      getMarket(gameId).then(setMarket).catch(()=>{});
     } catch(e) { setError(e.message||"Seed failed"); }
   }
   async function pass() {
