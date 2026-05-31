@@ -773,7 +773,7 @@ def recent_duplicate_blocked(state: GameState, word: str) -> bool:
     return word.upper() in {w.upper() for w in state.usedWords}
 
 
-def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, path):
+def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, path, advance_market_flag: bool = False):
     if state.winner:
         raise ValueError("Game already finished")
     if not in_bounds(row, col):
@@ -906,7 +906,7 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     return temp
 
 
-def apply_seed_move(state: GameState, row: int, col: int, letter: str):
+def apply_seed_move(state: GameState, row: int, col: int, letter: str, advance_market_flag: bool = False):
     if state.winner:
         raise ValueError("Game already finished")
     if not in_bounds(row, col) or state.board[row][col].letter is not None:
