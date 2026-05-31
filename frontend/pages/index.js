@@ -354,6 +354,11 @@ export default function Home() {
   }, []);
 
   // ── boot helpers ─────────────────────────────────────────────────────────
+  function resetMarket() {
+    setMarket({ active:[], preview:[], stats:[], freeLetterUsed:false });
+    setFreeLetter('');
+    setShowFreeInput(false);
+  }
   function reset() {
     setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null);
     setSum(false); setCopied(false); setShareText(""); setNickname(""); setMyRank(null);
@@ -367,8 +372,8 @@ export default function Home() {
         setGameId(d.game_id); setState(d.state); setDailyMode(false);
         reset(); setAnimGen(0); setBootMsg("");
 
-        // Suggestions are non-critical — don't let failure block game start
         getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
+        getMarket(d.game_id).then(setMarket).catch(() => {});
         return;
       } catch(e) {
         lastErr = e;
@@ -387,6 +392,7 @@ export default function Home() {
     reset(); setAnimGen(0);
 
     getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
+    getMarket(d.game_id).then(setMarket).catch(() => {});
   }
   useEffect(() => { boot().catch(e => setError(String(e))); }, []);
 
@@ -894,7 +900,7 @@ export default function Home() {
           {/* move controls */}
           <div className="mpanel">
             <div className="mrow">
-              <label className="mlbl">Letter</label>
+              <label className="mlbl">{market.active.length > 0 ? "Selected" : "Letter"}</label>
               <input ref={letterRef} className="minput" value={letter} maxLength={1}
                 disabled={!human()}
                 onChange={e=>setLetter(e.target.value.toUpperCase().slice(0,1))}
