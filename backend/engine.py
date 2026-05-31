@@ -305,80 +305,94 @@ def _fast_bot_moves_for_letter(state: GameState, letter: str,
 
 def generate_letter_market(state: GameState) -> tuple[list[str], list[str]]:
     """
-    Generate 3 active + 3 preview letters for the Letter Market.
-    Rules:
-    - At least 1 of the 3 active letters must enable ≥1 valid word on the board.
-    - Bias toward frequency-weighted letters.
-    - Avoid Q/X/Z/J in the active 3 unless board needs them.
+    Generate 3 active + 3 preview letters using find_almost_words.
+    Guarantees at least 1 letter that creates a valid word.
     """
     import random as _r
 
     RARE = {'Q','X','Z','J'}
     board_letters = board_letters_set(state)
 
-    def weighted_letter(exclude_rare=True):
-        pool = [l for l in _ALL_LETTERS if l not in board_letters]
-        if exclude_rare:
-            pool = [l for l in pool if l not in RARE] or pool
+    def weighted_letter(exclude_rare=True, exclude=None):
+        pool = [l for l in _ALL_LETTERS
+                if l not in board_letters
+                and (not exclude_rare or l not in RARE)
+                and (not exclude or l not in exclude)]
+        if not pool:
+            pool = [l for l in _ALL_LETTERS if l not in board_letters] or _ALL_LETTERS
         weights = [_LETTER_WEIGHTS[l] for l in pool]
-        total = sum(weights)
-        r = _r.random() * total
-        cum = 0
-        for l, w in zip(pool, weights):
-            cum += w
-            if r <= cum:
-                return l
-        return pool[-1]
+        return _r.choices(pool, weights=weights)[0]
 
-    # Generate candidates; ensure at least 1 has valid word
-    max_attempts = 20
+    # ── Find guaranteed-good letters via Almost/Tenpai ───────────────────
+    try:
+        almost = find_almost_words(state, limit=10)
+        good_letters = list({a["needs"] for a in almost
+                             if a["needs"] not in board_letters})
+        _r.shuffle(good_letters)
+    except Exception:
+        good_letters = []
+
+    # Build active: use up to 2 "good" letters + fill with weighted randoms
     active = []
-    for _ in range(max_attempts):
-        active = [weighted_letter() for _ in range(3)]
-        # Deduplicate
-        seen = set()
-        uniq = []
-        for l in active:
-            if l not in seen:
-                seen.add(l); uniq.append(l)
-            else:
-                # replace with another letter
-                replacement = weighted_letter()
-                seen.add(replacement); uniq.append(replacement)
-        active = uniq
+    seen = set()
+    for l in good_letters[:2]:
+        if l not in seen:
+            active.append(l); seen.add(l)
+    while len(active) < 3:
+        l = weighted_letter(exclude=seen)
+        active.append(l); seen.add(l)
 
-        # Check at least 1 enables a word
-        if any(_letter_enables_word(state, l) for l in active):
-            break
-        # Last resort: replace one with a vowel
-        if _ == max_attempts - 2:
-            active[0] = _r.choice(['A','E','I','O','U'])
+    # Preview letters (frequency-weighted, no validation needed)
+    preview_seen = set(active)
+    preview = []
+    for _ in range(3):
+        l = weighted_letter(exclude=preview_seen)
+        preview.append(l); preview_seen.add(l)
 
-    # Preview letters (simple frequency-weighted, no validation needed)
-    preview = [weighted_letter(exclude_rare=True) for _ in range(3)]
-
-    return active, preview
+    return active[:3], preview[:3]
 
 
 def advance_market(state: GameState, used_letter: str) -> tuple[list[str], list[str]]:
     """
     Remove used_letter from active market, pull 1 from preview,
-    add new letter to end of preview.
+    replenish with an Almost-guided letter when possible.
     Returns (new_active, new_preview).
     """
     import random as _r
-    active  = [l for l in state.marketLetters if l != used_letter]
-    if not active:
-        active = list(state.marketLetters)
+    RARE = {'Q','X','Z','J'}
+    board_letters = board_letters_set(state)
+
+    active = [l for l in state.marketLetters if l != used_letter]
     if len(active) < 3 and state.previewLetters:
         active.append(state.previewLetters[0])
-    preview = state.previewLetters[1:] if state.previewLetters else []
-    # Refill preview
-    board_letters = board_letters_set(state)
-    RARE = {'Q','X','Z','J'}
-    while len(preview) < 3:
-        pool = [l for l in _ALL_LETTERS if l not in RARE]
-        preview.append(_r.choices(pool, weights=[_LETTER_WEIGHTS[l] for l in pool])[0])
+
+    preview = state.previewLetters[1:] if len(state.previewLetters) > 1 else []
+
+    # Refill preview — try to add an Almost-guided letter
+    if len(preview) < 3:
+        try:
+            almost = find_almost_words(state, limit=6)
+            good = [a["needs"] for a in almost
+                    if a["needs"] not in board_letters
+                    and a["needs"] not in active
+                    and a["needs"] not in preview]
+            _r.shuffle(good)
+        except Exception:
+            good = []
+
+        existing = set(active) | set(preview)
+        for l in good:
+            if len(preview) >= 3: break
+            preview.append(l)
+        while len(preview) < 3:
+            pool = [l for l in _ALL_LETTERS
+                    if l not in RARE and l not in existing]
+            if not pool:
+                pool = [l for l in _ALL_LETTERS if l not in RARE]
+            l = _r.choices(pool, weights=[_LETTER_WEIGHTS[l] for l in pool])[0]
+            preview.append(l)
+            existing.add(l)
+
     return active[:3], preview[:3]
 
 
