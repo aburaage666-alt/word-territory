@@ -174,7 +174,7 @@ def find_almost_words(state: GameState, limit: int = 5) -> list[dict]:
                     if plen >= 3 and (er, ec) in set(path):
                         word = letters_from_path(state, path, (er, ec), needed_letter)
                         if (word and word in words and word not in excluded
-                                and word not in seen_words and _is_ui_word(word)):
+                                and word not in seen_words):
                             seen_words.add(word)
                             results.append({
                                 "word": word,
@@ -199,47 +199,12 @@ def find_almost_words(state: GameState, limit: int = 5) -> list[dict]:
     return results[:limit]
 
 
-# Words to exclude from Suggested / Almost UI.
-# Keep the underlying dictionary permissive, but do not surface obscure,
-# abbreviation-like, or player-confusing entries in beginner-facing hint panels.
+# Words to exclude from Suggested panel (obscure/abbreviations)
 _SUGGESTED_EXCLUDE = frozenset({
     'HRS','HES','MAS','EST','SIM','IDES','ODES','PHI','PSI','ETA',
     'TAO','OCA','EFT','OFT','ERE','EKE','GOB','POI','KOI','ZIT',
     'JUT','OOH','AAH','HMM','DOIT','NARC','OTIC','ALEC',
-    # UI-filter additions from playtest feedback
-    'TOSH','LENO','VAR','FARO','TARO','GEN','OAR','MAR','PAR',
-    'ELKS',  # valid but awkward as a first visible Almost hint
 })
-
-# Common words get priority in Suggested / Almost panels. This is not a full
-# dictionary; it is a presentation bias so players see natural words first.
-_COMMON_UI_WORDS = frozenset({
-    'ARE','ARM','ART','ATE','BAR','BAT','BEAR','BARN','BEND','BENT','BET',
-    'CAN','CAR','CARE','CART','CAT','DEN','EAR','EARN','EAT','FAR','FARM',
-    'HAT','HEN','HER','KIN','MAN','MEAN','MEAT','NEAR','NET','NOTE','ONE',
-    'RAN','RAT','RATE','ROAD','ROSE','SEA','SEAT','SIN','SON','STAR','STONE',
-    'STORE','TAR','TEA','TEN','TONE','TON','TUSK','WAR','WATER',
-})
-
-def _is_ui_word(word: str) -> bool:
-    """Return whether a word should be shown in player-facing hints.
-
-    The game validator may allow more dictionary words, but the UI should prefer
-    words that feel recognizable. This reduces 'is that a word?' friction.
-    """
-    if not word:
-        return False
-    w = word.upper()
-    if w in _SUGGESTED_EXCLUDE:
-        return False
-    if not (3 <= len(w) <= 6):
-        return False
-    # Avoid obvious abbreviation/odd-vowel patterns unless whitelisted.
-    if len(w) == 3 and w not in _COMMON_UI_WORDS:
-        # Let simple vowel-rich words through, but hide many Scrabble-only items.
-        if sum(1 for ch in w if ch in 'AEIOU') == 0:
-            return False
-    return True
 
 
 # ── Letter Market ─────────────────────────────────────────────────────────────
@@ -281,48 +246,25 @@ def _letter_enables_word(state: GameState, letter: str, max_check: int = 8) -> b
 
 
 def _letter_best_stats(state: GameState, letter: str) -> dict:
-    """Return UI-facing stats for one active market letter.
-
-    The legal dictionary can remain broad, but the displayed best word and count
-    are filtered so the market does not advertise obscure entries as the main
-    path forward.
+    """Return {word_count, best_gain, best_word, roles} for one letter.
+    Lightweight — no simulate_move, uses path-length estimate for gain.
     """
     excluded = set(state.usedWords)
-    raw_moves = _fast_bot_moves_for_letter(state, letter, max_results=16, excluded=excluded)
-    moves = [m for m in raw_moves if _is_ui_word(m.get("word", ""))]
-
+    moves = _fast_bot_moves_for_letter(state, letter, max_results=8, excluded=excluded)
     if not moves:
-        return {
-            "wordCount": 0,
-            "bestGain": 0,
-            "bestWord": "",
-            "roles": [],
-            "kind": "SETUP",
-            "hint": "setup",
-        }
-
-    best = max(moves, key=lambda m: (m.get("territory_gain", 0), len(m.get("word", ""))))
+        return {"wordCount": len(moves), "bestGain": 0, "bestWord": "", "roles": []}
+    best = max(moves, key=lambda m: m.get("territory_gain", 0))
+    # Quick role detection without simulate_move
     roles = []
-    for m in moves[:5]:
+    for m in moves[:3]:
         w = m.get("word", "")
         if len(w) >= 5 and "POWER WORD" not in roles:
             roles.append("POWER WORD")
-
-    best_gain = best.get("territory_gain", 0)
-    word_count = len(moves)
-    kind = "SAFE"
-    if best_gain >= 5 or roles:
-        kind = "POWER"
-    elif word_count <= 1:
-        kind = "TACTIC"
-
     return {
-        "wordCount": word_count,
-        "bestGain":  best_gain,
+        "wordCount": len(moves),
+        "bestGain":  best.get("territory_gain", 0),
         "bestWord":  best.get("word", ""),
         "roles":     roles[:2],
-        "kind":      kind,
-        "hint":      f"Best {best.get('word', '')}" if best.get("word") else "",
     }
 
 
@@ -391,8 +333,7 @@ def _score_all_letters(state: GameState) -> dict:
 
     scores = {}
     for letter in candidates:
-        raw_moves = _fast_bot_moves_for_letter(state, letter, max_results=10, excluded=excluded)
-        moves = [m for m in raw_moves if _is_ui_word(m.get("word", ""))]
+        moves = _fast_bot_moves_for_letter(state, letter, max_results=6, excluded=excluded)
         best_gain = max((m.get("territory_gain", 0) for m in moves), default=0)
         best_word = max(moves, key=lambda m: m.get("territory_gain", 0),
                         default={}).get("word", "") if moves else ""
@@ -508,107 +449,82 @@ def generate_letter_market(state: GameState) -> tuple[list[str], list[str]]:
 
 def advance_market(state: GameState, used_letter: str) -> tuple[list[str], list[str]]:
     """
-    Remove used_letter from active market, pull 1 from preview,
-    replenish with an Almost-guided letter when possible.
-    Returns (new_active, new_preview).
+    Remove used_letter from active, pull from preview, replenish.
+    Always returns 3 active + 3 preview letters.
     """
     import random as _r
-    RARE = {'Q','X','Z','J'}
+    RARE = {"Q","X","Z","J"}
     board_letters = board_letters_set(state)
 
+    # Step 1: Remove used letter from active
     active = [l for l in state.marketLetters if l != used_letter]
-    if len(active) < 3 and state.previewLetters:
-        active.append(state.previewLetters[0])
 
-    preview = state.previewLetters[1:] if len(state.previewLetters) > 1 else []
+    # Step 2: Pull from preview to fill active to 3
+    preview = list(state.previewLetters) if state.previewLetters else []
+    while len(active) < 3 and preview:
+        active.append(preview.pop(0))
 
-    # Refill preview — try to add an Almost-guided letter
-    if len(preview) < 3:
+    # Step 3: If still short, use scored letters
+    existing = set(active) | set(preview)
+    if len(active) < 3:
         try:
-            almost = find_almost_words(state, limit=6)
-            good = [a["needs"] for a in almost
-                    if a["needs"] not in board_letters
-                    and a["needs"] not in active
-                    and a["needs"] not in preview]
-            _r.shuffle(good)
+            scores = _score_all_letters(state)
+            ranked = sorted(
+                [(l, s) for l, s in scores.items()
+                 if s["words"] > 0 and l not in existing],
+                key=lambda x: -(x[1]["gain"] + x[1]["words"])
+            )
+            for l, _ in ranked:
+                if len(active) >= 3: break
+                active.append(l); existing.add(l)
         except Exception:
-            good = []
-
-        existing = set(active) | set(preview)
-        for l in good:
-            if len(preview) >= 3: break
-            preview.append(l)
-        while len(preview) < 3:
-            pool = [l for l in _ALL_LETTERS
-                    if l not in RARE and l not in existing]
-            if not pool:
-                pool = [l for l in _ALL_LETTERS if l not in RARE]
+            pass
+        while len(active) < 3:
+            pool = [l for l in _ALL_LETTERS if l not in RARE and l not in existing]
+            if not pool: pool = [l for l in _ALL_LETTERS if l not in existing] or list(_ALL_LETTERS)
             l = _r.choices(pool, weights=[_LETTER_WEIGHTS[l] for l in pool])[0]
-            preview.append(l)
-            existing.add(l)
+            active.append(l); existing.add(l)
+
+    # Step 4: Refill preview to 3 using Almost guidance
+    try:
+        almost = find_almost_words(state, limit=6)
+        good = [a["needs"] for a in almost
+                if a["needs"] not in board_letters and a["needs"] not in existing]
+        _r.shuffle(good)
+    except Exception:
+        good = []
+    for l in good:
+        if len(preview) >= 3: break
+        preview.append(l); existing.add(l)
+    while len(preview) < 3:
+        pool = [l for l in _ALL_LETTERS if l not in RARE and l not in existing]
+        if not pool: pool = [l for l in _ALL_LETTERS if l not in RARE]
+        l = _r.choices(pool, weights=[_LETTER_WEIGHTS[l] for l in pool])[0]
+        preview.append(l); existing.add(l)
 
     return active[:3], preview[:3]
 
 
+
 def get_market_stats(state: GameState) -> list[dict]:
-    """Return enriched stats for each active market letter.
-
-    The first three cards should not look identical. We label them according to
-    their tactical role: reliable play, high value/power, or setup/future value.
-    """
+    """Return stats for each active market letter."""
     stats = []
-    almost_by_letter = {}
-    try:
-        for a in find_almost_words(state, limit=8):
-            almost_by_letter.setdefault(a["needs"], a["word"])
-    except Exception:
-        almost_by_letter = {}
-
-    role_order = ["SAFE", "POWER", "SETUP"]
-    for i, letter in enumerate(state.marketLetters):
+    for letter in state.marketLetters:
         s = _letter_best_stats(state, letter)
         s["letter"] = letter
-
-        # Market generation intentionally orders active cards as Safe / Power / Setup.
-        # Keep that visible, while allowing genuinely powerful cards to advertise POWER.
-        ordered_kind = role_order[i] if i < len(role_order) else s.get("kind", "TACTIC")
-        if s.get("kind") == "POWER":
-            ordered_kind = "POWER"
-        if s.get("wordCount", 0) == 0:
-            ordered_kind = "SETUP"
-        s["kind"] = ordered_kind
-
-        setup_word = almost_by_letter.get(letter)
-        if setup_word:
-            s["setupWord"] = setup_word
-            if not s.get("hint"):
-                s["hint"] = f"Completes {setup_word}"
-        elif s.get("bestWord"):
-            s["hint"] = f"Best {s['bestWord']}"
-        else:
-            s["hint"] = "Seed setup"
         stats.append(s)
     return stats
 
 
 def find_candidate_words(state: GameState, limit: int = 15) -> list[str]:
-    """Return UI-friendly playable words for Suggested."""
+    """Return PLAYABLE words for Suggested — filtered for common words."""
     excluded = set(state.usedWords)
-    moves = _fast_bot_moves(state, max_len=4, max_results=limit * 4, excluded=excluded)
+    moves = _fast_bot_moves(state, max_len=4, max_results=limit * 2, excluded=excluded)
     seen = set()
     result = []
-    # Prefer common/natural words first, then higher territory estimate.
-    moves = sorted(
-        moves,
-        key=lambda m: (
-            0 if m["word"] in _COMMON_UI_WORDS else 1,
-            -len(m["word"]),
-            m["word"],
-        )
-    )
     for m in moves:
         w = m["word"]
-        if w in seen or not _is_ui_word(w):
+        if w in seen or w in _SUGGESTED_EXCLUDE:
             continue
         seen.add(w)
         result.append(w)
@@ -997,8 +913,7 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     if is_game_over(temp):
         temp.winner = decide_winner(temp)
 
-    # Advance Letter Market only for the human/player market action.
-    # Bot simulations and bot turns should not consume the player's market.
+    # Advance Letter Market — only for human player moves (flag=True)
     if advance_market_flag and temp.marketLetters:
         new_active, new_preview = advance_market(temp, letter)
         temp.marketLetters  = new_active
@@ -1042,7 +957,7 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str, advance_m
     temp.recentMoves = [f"{player}: SEED ({letter.upper()})"] + temp.recentMoves[:4]
     if is_game_over(temp):
         temp.winner = decide_winner(temp)
-    # Advance market only when explicitly requested.
+    # Advance market — only for human player moves (flag=True)
     if advance_market_flag and temp.marketLetters:
         new_active, new_preview = advance_market(temp, letter.upper())
         temp.marketLetters  = new_active
@@ -1095,6 +1010,8 @@ def preview_move(state: GameState, row: int, col: int, letter: str, path) -> Pre
 
 
 def is_game_over(state: GameState) -> bool:
+    if state.winner:
+        return True
     if state.turn > MAX_TURNS or state.consecutivePasses >= 2:
         return True
     return all(cell.letter is not None for row in state.board for cell in row)
@@ -1109,7 +1026,7 @@ def decide_winner(state: GameState):
     # Tiebreak: word score
     if state.scores.redWord != state.scores.blueWord:
         return "RED" if state.scores.redWord > state.scores.blueWord else "BLUE"
-    return None
+    return "DRAW"
 
 
 # BOT
