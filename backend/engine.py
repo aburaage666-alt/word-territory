@@ -178,7 +178,7 @@ def find_almost_words(state: GameState, limit: int = 5) -> list[dict]:
                     if plen >= 3 and (er, ec) in set(path):
                         word = letters_from_path(state, path, (er, ec), needed_letter)
                         if (word and word in words and word not in excluded
-                                and word not in seen_words and _is_ui_word(word)):
+                                and word not in seen_words):
                             seen_words.add(word)
                             results.append({
                                 "word": word,
@@ -203,47 +203,12 @@ def find_almost_words(state: GameState, limit: int = 5) -> list[dict]:
     return results[:limit]
 
 
-# Words to exclude from player-facing hints and bot preference.
-# Important: these are NOT removed from the dictionary/validator.
-# A player can still manually play them, but Suggested / Almost / Bot / Preview
-# avoid surfacing abbreviations, proper-looking forms, archaic/obscure entries,
-# or words that make the demo feel like a dictionary exploit.
+# Words to exclude from Suggested panel (obscure/abbreviations)
 _SUGGESTED_EXCLUDE = frozenset({
-    # abbreviations / units / acronyms
-    'MPH','ETC','LIB','TBSP','TSP','HRS','HR','MIN','SEC','USD','GBP','EUR',
-    'DNA','RNA','CPU','GPU','USB','URL','HTML','HTTP','CEO','CFO','MBA','PHD',
-    # Greek letters / particles / crosswordese
-    'PHI','PSI','ETA','TAO','OCA','EFT','OFT','ERE','EKE','KOI','POI',
-    # interjections / odd short entries
-    'OOH','AAH','HMM','UGH','PST','SHH',
-    # obscure / proper-looking / weak demo words observed in tests
-    'HES','MAS','EST','SIM','IDES','ODES','JUT','ZIT','GOB','DOIT','NARC','OTIC','ALEC',
-    'VAR','FARO','TARO','GEN','TOSH','LENO','BIFF','GLIB',
-    # very technical / weak bot choices
-    'ION','IONA','ERG','OHM','EMU','OVA','AXE',
+    'HRS','HES','MAS','EST','SIM','IDES','ODES','PHI','PSI','ETA',
+    'TAO','OCA','EFT','OFT','ERE','EKE','GOB','POI','KOI','ZIT',
+    'JUT','OOH','AAH','HMM','DOIT','NARC','OTIC','ALEC',
 })
-
-
-def _is_ui_word(word: str) -> bool:
-    """Return True for words suitable for hints, bot preference, and pitch-visible UI.
-
-    The core validator can still accept the full dictionary. This only controls
-    what the game recommends or lets the bot prioritize.
-    """
-    if not word:
-        return False
-    w = word.upper().strip()
-    if w in _SUGGESTED_EXCLUDE:
-        return False
-    if len(w) < 3 or len(w) > 6:
-        return False
-    # Hide all-uppercase abbreviation-like words with no clear vowel flow.
-    if len(w) == 3 and sum(1 for ch in w if ch in 'AEIOU') == 0:
-        return False
-    # Avoid pluralized abbreviation/dictionary-noise patterns in hints.
-    if len(w) <= 4 and w.endswith('S') and w[:-1] in _SUGGESTED_EXCLUDE:
-        return False
-    return True
 
 
 # ── Letter Market ─────────────────────────────────────────────────────────────
@@ -266,48 +231,64 @@ SYNERGY_CARDS = {
         "icon": "🌉",
         "effect": "BRIDGE grants +5T instead of +3T.",
         "flavor": "Unite what was divided.",
+        "difficulty": "Medium",
+        "tip": "Connect separated zones for big payoffs.",
     },
     "FORTIFIER": {
         "name": "Fortifier",
         "icon": "🏰",
-        "effect": "First Fortify +8T. Every Fortify after that +3T instead of +2T.",
+        "effect": "First Fortify +8T. Every Fortify after that +3T.",
         "flavor": "Walls that hold, win.",
+        "difficulty": "Hard",
+        "tip": "Surround your own cells from all sides.",
     },
     "CUT_HUNTER": {
         "name": "Cut Hunter",
         "icon": "⚔️",
         "effect": "After CUT, your next Capture earns +2T bonus.",
         "flavor": "Divide, then conquer.",
+        "difficulty": "Hard",
+        "tip": "Split opponent territory, then Capture the pieces.",
     },
     "LONG_WORD": {
         "name": "Long Word",
         "icon": "📖",
-        "effect": "5-letter words +3T extra. 6-letter words +5T extra.",
+        "effect": "5-letter words +3T. 6-letter words +5T.",
         "flavor": "The longer the word, the wider the territory.",
+        "difficulty": "Easy",
+        "tip": "Focus on 5-6 letter words to earn big bonuses.",
     },
     "VOWEL_ENGINE": {
         "name": "Vowel Engine",
         "icon": "🔤",
         "effect": "Placing a vowel (A/E/I/O/U) gives +1T bonus.",
         "flavor": "Language flows through vowels.",
+        "difficulty": "Easy",
+        "tip": "Pick vowels from the market every turn.",
     },
     "COMEBACK_SPARK": {
         "name": "Comeback Spark",
         "icon": "🔥",
         "effect": "When losing by 10+ cells, all role bonuses +1T extra.",
         "flavor": "Pressure creates diamonds.",
+        "difficulty": "Easy",
+        "tip": "Most useful when you fall behind early.",
     },
     "SEED_TACTICIAN": {
         "name": "Seed Tactician",
         "icon": "🌱",
         "effect": "After a Seed move, your next word earns +3T bonus.",
         "flavor": "Every setup has its reward.",
+        "difficulty": "Medium",
+        "tip": "Use Seed as a setup, not just a fallback.",
     },
     "POWER_SEEKER": {
         "name": "Power Seeker",
         "icon": "⚡",
         "effect": "POWER WORD grants +3T instead of +1T.",
         "flavor": "Vocabulary is territory.",
+        "difficulty": "Easy",
+        "tip": "Aim for 5-6 letter words every turn.",
     },
 }
 
@@ -319,81 +300,67 @@ def pick_synergy_options() -> list[str]:
 
 
 def apply_synergy_bonus(state: GameState, combos: list[str], player: str,
-                        word: str, letter: str) -> int:
-    """Return extra territory from the active synergy card."""
+                        word: str, letter: str) -> tuple[int, str]:
+    """Return (extra_territory, activation_message) from the active synergy card."""
     card = state.selectedSynergy
     if not card:
-        return 0
+        return 0, ""
 
     bonus = 0
+    msg = ""
     opp = "BLUE" if player == "RED" else "RED"
     my_t  = sum(1 for r in state.board for c in r if c.owner == player)
     opp_t = sum(1 for r in state.board for c in r if c.owner == opp)
+    card_info = SYNERGY_CARDS.get(card, {})
+    icon = card_info.get("icon", "✦")
+    name = card_info.get("name", card)
 
     if card == "BRIDGE_MASTER" and "BRIDGE" in combos:
-        bonus += 2          # +2 on top of the base +3 = +5 total
+        bonus = 2
+        msg = f"{icon} {name} activated! +{bonus+3}T (Bridge bonus)"
 
     elif card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
         if not state.synergyState.get("firstLockDone"):
-            bonus += 6      # first time: +8 total (base +2, synergy +6)
+            bonus = 6
+            msg = f"{icon} {name} — First Fortify! +8T"
         else:
-            bonus += 1      # every time after: +3 total (base +2, synergy +1)
+            bonus = 1
+            msg = f"{icon} {name} activated! +3T"
 
     elif card == "CUT_HUNTER" and "CAPTURE" in combos:
         if state.synergyState.get("cutPending"):
-            bonus += 2
+            bonus = 2
+            msg = f"{icon} {name} — Cut follow-up! +2T"
 
     elif card == "LONG_WORD":
         wlen = len(word)
-        if wlen == 5:
-            bonus += 3
-        elif wlen >= 6:
-            bonus += 5
+        if wlen >= 6:
+            bonus = 5
+            msg = f"{icon} {name} — {wlen}-letter word! +{bonus}T"
+        elif wlen == 5:
+            bonus = 3
+            msg = f"{icon} {name} — 5-letter word! +{bonus}T"
 
     elif card == "VOWEL_ENGINE" and letter.upper() in "AEIOU":
-        bonus += 1
+        bonus = 1
+        msg = f"{icon} {name} — vowel placed! +1T"
 
     elif card == "COMEBACK_SPARK" and (opp_t - my_t) >= 10:
-        bonus += len(combos)  # +1 per combo when losing badly
+        bonus = len(combos)
+        if bonus > 0:
+            msg = f"{icon} {name} — comeback! +{bonus}T"
 
     elif card == "SEED_TACTICIAN":
         if state.synergyState.get("seedPending"):
-            bonus += 3
+            bonus = 3
+            msg = f"{icon} {name} — seed payoff! +3T"
 
     elif card == "POWER_SEEKER" and "POWER WORD" in combos:
-        bonus += 2          # +2 on top of base +1 = +3 total
+        bonus = 2
+        msg = f"{icon} {name} activated! +3T (Power Word)"
 
-    return bonus
+    return bonus, msg
 
-
-
-
-def synergy_activation_text(state: GameState, combos: list[str], player: str,
-                            word: str, letter: str, bonus: int) -> str:
-    """Human-readable synergy activation message for history/flash UI."""
-    if bonus <= 0 or not state.selectedSynergy:
-        return ""
-    card = state.selectedSynergy
-    name = SYNERGY_CARDS.get(card, {}).get('name', 'Synergy')
-    if card == 'BRIDGE_MASTER':
-        return f"{name} activated! +{bonus}T"
-    if card == 'FORTIFIER':
-        if not state.synergyState.get('firstLockDone'):
-            return f"{name} first lock! +{bonus}T"
-        return f"{name} activated! +{bonus}T"
-    if card == 'CUT_HUNTER':
-        return f"{name} capture bonus! +{bonus}T"
-    if card == 'LONG_WORD':
-        return f"{name} activated! +{bonus}T"
-    if card == 'VOWEL_ENGINE':
-        return f"{name} activated! +{bonus}T"
-    if card == 'COMEBACK_SPARK':
-        return f"{name} activated! +{bonus}T"
-    if card == 'SEED_TACTICIAN':
-        return f"{name} activated! +{bonus}T"
-    if card == 'POWER_SEEKER':
-        return f"{name} activated! +{bonus}T"
-    return f"{name} activated! +{bonus}T"
 
 def update_synergy_state(state: GameState, combos: list[str],
                          is_seed: bool = False) -> dict:
@@ -487,7 +454,7 @@ def _fast_bot_moves_for_letter(state: GameState, letter: str,
             path, vis = stack.pop()
             if len(path) >= 3 and (er,ec) in set(path):
                 w = letters_from_path(state, path, (er,ec), letter)
-                if w and w in words and w not in excluded and _is_ui_word(w):
+                if w and w in words and w not in excluded:
                     # Quick territory estimate: path length
                     gain = len(path)
                     results.append({"row": er, "col": ec, "letter": letter,
@@ -708,76 +675,6 @@ def advance_market(state: GameState, used_letter: str) -> tuple[list[str], list[
 
 
 
-
-def get_letter_preview_moves(state: GameState, letter: str, limit: int = 12) -> list[dict]:
-    """Return best board placements for a selected Letter Market tile.
-
-    This powers the Balatro-like expectation preview:
-    selected letter -> highlighted cells -> predicted word / territory / combo.
-    It is intentionally best-effort and never mutates the live state.
-    """
-    letter = (letter or "").upper()[:1]
-    if not letter or not letter.isalpha():
-        return []
-
-    excluded = set(state.usedWords)
-    try:
-        raw_moves = _fast_bot_moves_for_letter(state, letter, max_results=limit * 4, excluded=excluded)
-    except Exception:
-        raw_moves = []
-
-    by_cell: dict[tuple[int, int], dict] = {}
-    for m in raw_moves:
-        try:
-            after = validate_and_apply_move(
-                clone_state(state),
-                m["row"], m["col"], m["letter"], m["path"],
-                advance_market_flag=False,
-            )
-            last = after.moveHistory[-1]
-            combos = list(last.comboLabels or [])
-            value = (
-                last.territoryGained * 2
-                + last.wordScoreGained
-                + last.fortifiedCellsGained * 2
-                + last.captureCount * 5
-                + (4 if "BRIDGE" in combos else 0)
-                + (4 if "CUT" in combos else 0)
-                + (3 if "POWER WORD" in combos else 0)
-                + (3 if any(str(c).startswith("SYNERGY") for c in combos) else 0)
-            )
-            kind = "SAFE"
-            if last.captureCount > 0 or "BRIDGE" in combos or "CUT" in combos or any(str(c).startswith("SYNERGY") for c in combos):
-                kind = "POWER"
-            elif len(last.word) >= 5 or "POWER WORD" in combos:
-                kind = "LONG"
-            elif last.territoryGained <= 2:
-                kind = "SETUP"
-
-            item = {
-                "row": m["row"],
-                "col": m["col"],
-                "letter": letter,
-                "word": last.word,
-                "territoryGain": last.territoryGained,
-                "wordScore": last.wordScoreGained,
-                "lockGain": last.fortifiedCellsGained,
-                "captureCount": last.captureCount,
-                "comboLabels": combos,
-                "kind": kind,
-                "value": value,
-                "path": [{"row": p.row, "col": p.col} for p in last.path],
-            }
-            key = (item["row"], item["col"])
-            if key not in by_cell or item["value"] > by_cell[key]["value"]:
-                by_cell[key] = item
-        except Exception:
-            continue
-
-    moves = sorted(by_cell.values(), key=lambda x: (-x["value"], -x["territoryGain"], x["word"]))
-    return moves[:limit]
-
-
 def get_market_stats(state: GameState) -> list[dict]:
     """Return stats for each active market letter."""
     stats = []
@@ -788,6 +685,75 @@ def get_market_stats(state: GameState) -> list[dict]:
     return stats
 
 
+def get_letter_preview(state: GameState, letter: str) -> list[dict]:
+    """
+    For a given letter, return scored placement options for Value Preview.
+    Each result: {row, col, gain, word, tier, roles}
+    tier: "strong" (capture/bridge/synergy) | "good" (high gain) | "basic"
+    """
+    excluded = set(state.usedWords)
+    moves = _fast_bot_moves_for_letter(state, letter.upper(), max_results=20, excluded=excluded)
+    if not moves:
+        return []
+
+    # Group by cell — keep best move per cell
+    cell_best = {}
+    for m in moves:
+        key = (m["row"], m["col"])
+        if key not in cell_best or m["territory_gain"] > cell_best[key]["territory_gain"]:
+            cell_best[key] = m
+
+    # Score and tier each cell
+    results = []
+    synergy = state.selectedSynergy or ""
+    for (r, c), m in cell_best.items():
+        word = m.get("word", "")
+        gain = m.get("territory_gain", 0)
+
+        # Detect potential roles
+        roles = []
+        if len(word) >= 5:
+            roles.append("POWER WORD")
+
+        # Tier classification
+        is_strong = False
+        # Check Almost-style: does this enable capture/bridge in future?
+        if gain >= 5:
+            is_strong = True
+        # Synergy activation hints
+        synergy_hint = ""
+        if synergy == "BRIDGE_MASTER" and gain >= 4:
+            synergy_hint = "Bridge Master may activate"
+            is_strong = True
+        elif synergy == "LONG_WORD" and len(word) >= 5:
+            synergy_hint = f"Long Word bonus +{3 if len(word)==5 else 5}T"
+            is_strong = True
+        elif synergy == "POWER_SEEKER" and len(word) >= 5:
+            synergy_hint = "Power Seeker may activate"
+            is_strong = True
+        elif synergy == "VOWEL_ENGINE" and letter.upper() in "AEIOU":
+            synergy_hint = "Vowel Engine +1T"
+            is_strong = True
+
+        if synergy_hint:
+            roles.append(synergy_hint)
+
+        tier = "strong" if is_strong else ("good" if gain >= 3 else "basic")
+
+        results.append({
+            "row":   r,
+            "col":   c,
+            "gain":  gain,
+            "word":  word,
+            "tier":  tier,
+            "roles": roles[:2],
+        })
+
+    # Sort by gain desc
+    results.sort(key=lambda x: -x["gain"])
+    return results[:12]  # max 12 cells highlighted
+
+
 def find_candidate_words(state: GameState, limit: int = 15) -> list[str]:
     """Return PLAYABLE words for Suggested — filtered for common words."""
     excluded = set(state.usedWords)
@@ -796,7 +762,7 @@ def find_candidate_words(state: GameState, limit: int = 15) -> list[str]:
     result = []
     for m in moves:
         w = m["word"]
-        if w in seen or not _is_ui_word(w):
+        if w in seen or w in _SUGGESTED_EXCLUDE:
             continue
         seen.add(w)
         result.append(w)
@@ -1126,13 +1092,7 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     if "EDGE REACH" in combos:    bonus += 1
     if "COMEBACK" in combos:      bonus += 2
 
-    # Synergy Card bonus (Balatro-like build direction)
-    base_bonus = bonus
-    synergy_bonus = apply_synergy_bonus(temp, combos, player, word, letter)
-    bonus_uncapped = base_bonus + synergy_bonus
-
     # ── Anti-snowball: cap bonus when player is already winning by 10+ cells ──
-    bonus = bonus_uncapped
     if bonus > 0 and temp.scores:
         my_t   = temp.scores.redTerritory if player == "RED" else temp.scores.blueTerritory
         opp_t  = temp.scores.blueTerritory if player == "RED" else temp.scores.redTerritory
@@ -1142,13 +1102,14 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
         elif lead >= 10:
             bonus = min(bonus, 2)   # soft cap at 2 when comfortably ahead
 
-    # Show the actual synergy contribution after any anti-snowball cap.
-    actual_base_bonus = min(base_bonus, bonus)
-    actual_synergy_bonus = max(0, bonus - actual_base_bonus)
-    if actual_synergy_bonus > 0:
-        syn_text = synergy_activation_text(temp, combos, player, word, letter, actual_synergy_bonus)
-        if syn_text:
-            combos.append(f"SYNERGY:{syn_text}")
+    # ── Synergy Card bonus ──────────────────────────────────────────────
+    synergy_bonus, synergy_msg = apply_synergy_bonus(state, combos, player, word, letter)
+    if synergy_bonus > 0:
+        bonus += synergy_bonus
+    if synergy_msg:
+        combos = list(combos) + [f"SYNERGY:{synergy_msg}"]
+    temp.synergyState = update_synergy_state(temp, combos, is_seed=False)
+
     if bonus > 0:
         # Convert nearest unfortified non-player cells to player (bonus territory)
         import random as _r
@@ -1192,7 +1153,6 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     temp.lastCapturedCells = delta["captured"]
     temp.lastFortifiedCells = delta["newly_locked"]
     temp.lastComboLabels = combos
-    temp.synergyState = update_synergy_state(temp, combos, is_seed=False)
     temp.currentPlayer = other_player(player)
     temp.turn += 1
     temp.consecutivePasses = 0
@@ -1228,6 +1188,16 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str, advance_m
     temp.lastCapturedCells = []
     temp.lastFortifiedCells = []
     temp.lastComboLabels = []
+    # Seed cost: opponent +1T (unless SEED_TACTICIAN)
+    if state.selectedSynergy != "SEED_TACTICIAN":
+        import random as _r
+        opp = other_player(player)
+        give_cells = [(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)
+                      if temp.board[r][c].letter and temp.board[r][c].owner == player
+                      and not temp.board[r][c].fortified]
+        if give_cells:
+            _r.shuffle(give_cells)
+            temp.board[give_cells[0][0]][give_cells[0][1]].owner = opp
     temp.synergyState = update_synergy_state(temp, [], is_seed=True)
     item = MoveHistoryItem(
         turn=state.turn,
@@ -1480,7 +1450,7 @@ def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: 
                 if plen >= 3 and (er, ec) in set(path):
                     for placed_letter in LETTERS:
                         word = letters_from_path(state, path, (er, ec), placed_letter)
-                        if word and word in words and word not in excluded and _is_ui_word(word):
+                        if word and word in words and word not in excluded:
                             results.append({
                                 "row": er, "col": ec,
                                 "letter": placed_letter,
