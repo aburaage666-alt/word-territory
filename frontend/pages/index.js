@@ -324,6 +324,9 @@ export default function Home() {
   const [showSuggest, setSuggest] = useState(true);
   const [showPremium, setPremium] = useState(false);
   const [showLB,      setShowLB]  = useState(false);  // ④
+  const [showSynergy, setShowSynergy] = useState(false);
+  const [synergyOpts, setSynergyOpts] = useState([]);
+  const [synergy, setSynergy] = useState("");
 
   // Combo banner persistence
   const [comboBanner, setCombo]   = useState([]);
@@ -844,19 +847,30 @@ export default function Home() {
           {/* board */}
           <div className="bwrap">
             <div className="board-wrap"><div className="board">
-              {state.board.map(row=>row.map(cell=>{
-                const k=asKey(cell.row,cell.col);
-                return <Cell key={k} cell={cell}
-                  sel={isSel(cell.row,cell.col)} placed={placed?.row===cell.row&&placed?.col===cell.col}
-                  legal={!placed&&isLegal(cell.row,cell.col)}
-                  changed={changedS.has(k)} captured={capturedS.has(k)} lockedNow={lockedS.has(k)}
-                  disabled={isDim(cell.row,cell.col)} gen={animGen}
-                  attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
-                  inPath={inPathOpponentSet.has(k)}
-                  onClick={()=>clickCell(cell.row,cell.col)}/>
-                {(()=>{ const vp=valuePrev.find(p=>p.row===cell.row&&p.col===cell.col);
-                  return (vp&&!cell.letter)? <div key="vp" className={`vp-overlay vp-${vp.tier}`} title={vp.word?vp.word+' +'+vp.gain+'T':''}><span className="vp-num">+{vp.gain}</span>{vp.tier==='strong'&&<span className="vp-star">★</span>}</div>:null;
-                })()}
+              {state.board.map(row => row.map(cell => {
+                const k = asKey(cell.row, cell.col);
+                const vp = Array.isArray(valuePrev)
+                  ? valuePrev.find(p => p.row === cell.row && p.col === cell.col)
+                  : null;
+                return (
+                  <div key={k} className="cell-slot">
+                    <Cell cell={cell}
+                      sel={isSel(cell.row,cell.col)} placed={placed?.row===cell.row&&placed?.col===cell.col}
+                      legal={!placed&&isLegal(cell.row,cell.col)}
+                      changed={changedS.has(k)} captured={capturedS.has(k)} lockedNow={lockedS.has(k)}
+                      disabled={isDim(cell.row,cell.col)} gen={animGen}
+                      attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
+                      inPath={inPathOpponentSet.has(k)}
+                      onClick={()=>clickCell(cell.row,cell.col)} />
+                    {vp && !cell.letter && (
+                      <div className={`vp-overlay vp-${vp.tier || 'basic'}`}
+                        title={vp.word ? `${vp.word} +${vp.gain || 0}T${vp.roles?.length ? ' / ' + vp.roles.join(' · ') : ''}` : ''}>
+                        <span className="vp-num">+{vp.gain || 0}</span>
+                        {vp.tier === 'strong' && <span className="vp-star">★</span>}
+                      </div>
+                    )}
+                  </div>
+                );
               }))}
             </div>
           </div>
@@ -883,30 +897,35 @@ export default function Home() {
                 </span>
               </div>
               <div className="lm-active">
-                {(market.stats||[]).map((s,i) => (
-                  <button key={i}
-                    className={`lm-tile ${letter===s.letter ? 'lm-selected' : ''}`}
-                    onClick={() => {
-                      const ltr = s.letter;
-                      setLetter(ltr); setPath([]); setPlaced(null); setError(''); setPreview(null);
-                      setValuePrev([]);
-                      if (gameId && ltr) getLetterPreview(gameId, ltr).then(setValuePrev).catch(()=>{});
-                    }}
-                    disabled={!human()}
-                    title={s.bestWord ? `Best: ${s.bestWord} +${s.bestGain}T` : 'No words available'}
-                  >
-                    <span className="lm-letter">{s.letter}</span>
-                    {s.wordCount > 0 ? (
-                      <span className="lm-stats">
-                        {s.bestGain > 0 && <span className="lm-gain">+{s.bestGain}T</span>}
-                        {s.wordCount > 0 && <span className="lm-count">{s.wordCount}w</span>}
-                        {s.roles?.length > 0 && <span className="lm-role">{s.roles[0].substring(0,3)}</span>}
-                      </span>
-                    ) : (
-                      <span className="lm-stats"><span className="lm-zero" style={{fontSize:10}}>no words</span></span>
-                    )}
-                  </button>
-                ))}
+                {(market.active||[]).map((ltr,i) => {
+                  const s = (market.stats||[]).find(x => x.letter === ltr) || { letter:ltr, wordCount:0, bestGain:0, bestWord:'', roles:[] };
+                  return (
+                    <button key={`${ltr}-${i}`}
+                      className={`lm-tile ${letter===s.letter ? 'lm-selected' : ''}`}
+                      onClick={() => {
+                        const ltr = s.letter;
+                        setLetter(ltr); setPath([]); setPlaced(null); setError(''); setPreview(null);
+                        setValuePrev([]);
+                        if (gameId && ltr) getLetterPreview(gameId, ltr)
+                          .then(r => setValuePrev(Array.isArray(r) ? r : (r?.moves || [])))
+                          .catch(()=>setValuePrev([]));
+                      }}
+                      disabled={!human()}
+                      title={s.bestWord ? `Best: ${s.bestWord} +${s.bestGain}T` : 'No words available'}
+                    >
+                      <span className="lm-letter">{s.letter}</span>
+                      {s.wordCount > 0 ? (
+                        <span className="lm-stats">
+                          {s.bestGain > 0 && <span className="lm-gain">+{s.bestGain}T</span>}
+                          {s.wordCount > 0 && <span className="lm-count">{s.wordCount}w</span>}
+                          {s.roles?.length > 0 && <span className="lm-role">{s.roles[0].substring(0,3)}</span>}
+                        </span>
+                      ) : (
+                        <span className="lm-stats"><span className="lm-zero" style={{fontSize:10}}>no words</span></span>
+                      )}
+                    </button>
+                  );
+                })}
                 {/* Free Letter (Wild) */}
                 {!market.freeLetterUsed ? (
                   <button className={`lm-tile lm-free ${showFreeInput ? 'lm-selected' : ''}`}
@@ -1237,6 +1256,8 @@ export default function Home() {
       .bwrap{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px;overflow-x:auto}
       .board-wrap{width:100%;overflow-x:auto;display:flex;justify-content:center;-webkit-overflow-scrolling:touch}
       .board{display:grid;grid-template-columns:repeat(7,58px);gap:5px;justify-content:center;min-width:max-content}
+      .cell-slot{position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center}
+      .cell-slot .cell{width:100%;height:100%}
       .cell{position:relative;width:44px;height:44px;border:1.5px solid #c8c8c8;border-radius:9px;background:#fafafa;font-size:17px;font-weight:800;cursor:pointer;transition:background .12s}
       .cell.cr{background:rgba(192,57,43,.15);border-color:rgba(192,57,43,.3)}
       .cell.cb{background:rgba(34,113,179,.15);border-color:rgba(34,113,179,.3)}
@@ -1582,6 +1603,10 @@ export default function Home() {
         }
         .ba{font-size:13px;padding:12px 6px}
       }
+
+      @media(max-width:900px){ .cell-slot{width:44px;height:44px} }
+      @media(max-width:600px){ .cell-slot{width:calc((100vw - 32px) / 7);height:calc((100vw - 32px) / 7)} }
+      @media(max-width:360px){ .cell-slot{width:calc((100vw - 20px) / 7);height:calc((100vw - 20px) / 7)} }
     `}</style>
   </>;
 }
