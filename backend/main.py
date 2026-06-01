@@ -53,7 +53,7 @@ from engine import (
     update_synergy_state,
     advance_market,
     get_market_stats,
-    get_letter_preview_moves,
+    get_letter_preview,
     pass_turn,
     preview_move,
     validate_and_apply_move,
@@ -339,6 +339,23 @@ def select_synergy(game_id: str, req: dict):
     return {"selected": card_key, "card": SYNERGY_CARDS[card_key]}
 
 
+# ── Value Preview endpoint ───────────────────────────────────────────────────
+
+@app.get("/games/{game_id}/preview/{letter}")
+def preview_letter(game_id: str, letter: str):
+    """Return scored placement options for a letter (Value Preview)."""
+    state = GAMES.get(game_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if len(letter) != 1 or not letter.isalpha():
+        raise HTTPException(status_code=400, detail="Invalid letter")
+    try:
+        placements = get_letter_preview(state, letter.upper())
+        return {"letter": letter.upper(), "placements": placements}
+    except Exception:
+        return {"letter": letter.upper(), "placements": []}
+
+
 # ── Letter Market endpoints ──────────────────────────────────────────────────
 
 @app.get("/games/{game_id}/market")
@@ -359,19 +376,6 @@ def get_market(game_id: str):
         "stats":   stats,
         "freeLetterUsed": state.freeLetterUsed,
     }
-
-
-@app.get("/games/{game_id}/letter-preview/{letter}")
-def get_letter_preview(game_id: str, letter: str):
-    """Return board-cell previews for the selected Letter Market tile."""
-    state = GAMES.get(game_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Game not found")
-    try:
-        moves = get_letter_preview_moves(state, letter, limit=12)
-    except Exception:
-        moves = []
-    return {"letter": (letter or "").upper()[:1], "moves": moves}
 
 
 @app.post("/games/{game_id}/free-letter")
