@@ -1388,6 +1388,7 @@ export default function Home() {
       .lm-zero{color:#aaa;font-size:11px}
       .lm-free{background:#fffbeb;border-color:#fbbf24}
       .lm-free:hover:not(:disabled){background:#fef3c7!important;border-color:#d97706!important}
+      .lm-endgame{font-size:11px;color:var(--color-text-tertiary);padding:4px 0 6px;font-style:italic;width:100%}
       .lm-freeLabel{background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 5px;font-size:11px;font-weight:800}
       .lm-used{opacity:.4;cursor:default!important}
       .lm-free-row{display:flex;gap:8px;margin-top:8px;align-items:center}
