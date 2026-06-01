@@ -64,7 +64,7 @@ function buildShare(num, ds, r) {
   const capturePct = Math.round((r.redScore / totalCells) * 100);
   const rank = getRank(capturePct);
   const rankEmoji = getRankEmoji(capturePct);
-  const result = r.winner === "RED" ? "WIN 🎉" : r.winner === "DRAW" ? "DRAW 🤝" : "LOSS 😤";
+  const result = r.winner === "RED" ? "WIN 🎉" : r.winner === null ? "DRAW 🤝" : "LOSS 😤";
   const emojiBoard = r.emojiBoard || "";
 
   return [
@@ -135,43 +135,23 @@ function updateStreak(dateStr) {
 }
 
 // ── Cell ──────────────────────────────────────────────────────────────────────
-function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, attack, inPath, movePreview, hotPreview, onPreviewEnter, onPreviewLeave, onClick }) {
+function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, attack, inPath, onClick }) {
   const cls = ["cell",
     cell.owner === "RED" ? "cr" : cell.owner === "BLUE" ? "cb" : "",
     cell.fortified ? "ft" : "", sel ? "sl" : "", placed ? "pl" : "",
     legal ? "lg" : "", disabled && !sel ? "dm" : "",
     attack ? "atk" : "",   // opponent cell that can be attacked
     inPath ? "inpath" : "", // opponent cell currently in selected path (will be captured)
-    movePreview ? "mv" : "",
-    movePreview && (movePreview.kind === "POWER" || movePreview.captureCount > 0) ? "mvpower" : "",
-    hotPreview ? "mvhot" : "",
   ].filter(Boolean).join(" ");
   return (
     <button className={cls} onClick={onClick} disabled={disabled}
-      onMouseEnter={() => movePreview && onPreviewEnter?.(movePreview)}
-      onMouseLeave={() => movePreview && onPreviewLeave?.()}
-      title={movePreview ? `${movePreview.word} +${movePreview.territoryGain}T${movePreview.captureCount ? ` / ${movePreview.captureCount} capture` : ""}${movePreview.comboLabels?.length ? ` / ${movePreview.comboLabels.join(" · ")}` : ""}` : undefined}
       data-chg={changed ? gen : null}
       data-cap={captured ? gen : null}
       data-lk={lockedNow ? gen : null}>
       {cell.letter || ""}
-      {movePreview && !cell.letter && <span className="mv-badge">+{movePreview.territoryGain}</span>}
       {attack && !inPath && <span className="atk-dot"/>}
     </button>
   );
-}
-
-// ── Combo label helpers ──────────────────────────────────────────────────────
-function comboLabelText(x) {
-  if (!x) return "";
-  return String(x).startsWith("SYNERGY:") ? String(x).replace(/^SYNERGY:\s*/, "") : String(x);
-}
-function comboLabelClass(x) {
-  return String(x || "").startsWith("SYNERGY:") ? "chip combo synergy" : "chip combo";
-}
-function comboSummary(labels) {
-  const arr = (labels || []).map(comboLabelText).filter(Boolean);
-  return arr.length ? arr.join(" + ") : "solid territory gain";
 }
 
 // ── HistItem ──────────────────────────────────────────────────────────────────
@@ -182,7 +162,15 @@ function HistItem({ m }) {
       {m.moveType === "WORD" && (
         <div className="hi-stats">+{m.territoryGained}T +{m.wordScoreGained}W 🔒{m.fortifiedCellsGained}{m.captureCount > 0 ? ` ✦${m.captureCount}cap` : ""}</div>
       )}
-      {m.comboLabels?.length > 0 && <div className="chips">{m.comboLabels.map(x => <span key={x} className={comboLabelClass(x)}>{comboLabelText(x)}</span>)}</div>}
+      {m.comboLabels?.length > 0 && <div className="chips">
+              {m.comboLabels.map((x,xi) => {
+                if (x.startsWith('SYNERGY:')) {
+                  const msg = x.replace('SYNERGY:','').trim();
+                  return <span key={xi} className="chip combo synergy-chip" title={msg}>✦ SYNERGY</span>;
+                }
+                return <span key={xi} className="chip combo">{x}</span>;
+              })}
+            </div>}
     </div>
   );
 }
@@ -337,14 +325,10 @@ export default function Home() {
   const [showPremium, setPremium] = useState(false);
   const [showLB,      setShowLB]  = useState(false);  // ④
 
-  // Synergy card UI state
-  const [showSynergy, setShowSynergy] = useState(false);
-  const [synergyOpts, setSynergyOpts] = useState([]);
-  const [synergy,     setSynergy]     = useState("");
-
   // Combo banner persistence
   const [comboBanner, setCombo]   = useState([]);
   const [synergyFlash, setSynergyFlash] = useState("");
+  const [valuePrev,   setValuePrev]   = useState([]); // [{row,col,gain,word,tier,roles}]
   const comboTimer = useRef(null);
   const [animGen,  setAnimGen]    = useState(0);
 
@@ -361,9 +345,6 @@ export default function Home() {
   const [market,      setMarket]      = useState({ active:[], preview:[], stats:[], freeLetterUsed:false });
   const [freeLetter,  setFreeLetter]  = useState('');
   const [showFreeInput, setShowFreeInput] = useState(false);
-  const [letterMoves, setLetterMoves] = useState([]);
-  const [letterPreviewLoading, setLetterPreviewLoading] = useState(false);
-  const [hoverMove, setHoverMove] = useState(null);
   // Tutorial UX: track how many turns have been played
   const tutTurns = (state?.moveHistory?.length || 0);
   const isTutorial = tutTurns < 3;  // first 3 turns = beginner mode
@@ -388,41 +369,12 @@ export default function Home() {
     setMarket({ active:[], preview:[], stats:[], freeLetterUsed:false });
     setFreeLetter('');
     setShowFreeInput(false);
-    setLetterMoves([]);
-    setHoverMove(null);
   }
-
-  function fallbackMarketFromState(st) {
-    const active = st?.marketLetters || [];
-    return {
-      active,
-      preview: st?.previewLetters || [],
-      freeLetterUsed: !!st?.freeLetterUsed,
-      stats: active.map(l => ({ letter:l, wordCount:0, bestGain:0, bestWord:'', roles:[] })),
-    };
-  }
-
-  async function syncMarketFromServer(id, st = null) {
-    if (st?.marketLetters?.length > 0) {
-      setMarket(fallbackMarketFromState(st));
-    }
-    try {
-      const mk = await getMarket(id);
-      setMarket({
-        active: mk.active || [],
-        preview: mk.preview || [],
-        stats: mk.stats || [],
-        freeLetterUsed: !!mk.freeLetterUsed,
-      });
-    } catch (_) {
-      // Keep fallback market from GameState. Never recreate the game here.
-    }
-  }
+  function resetValuePrev() { setValuePrev([]); }
   function reset() {
-    setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null); setLetterMoves([]); setHoverMove(null);
+    setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null);
     setSum(false); setCopied(false); setShareText(""); setNickname(""); setMyRank(null);
     setSubmitted(false); summaryFired.current = false;
-    setShowSynergy(false); setSynergyOpts([]); setSynergy("");
   }
   async function boot(m = mode) {
     let lastErr;
@@ -497,7 +449,7 @@ export default function Home() {
   // ── bot auto-move ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state || !gameId) return;
-    if (state.winner) return;  // stop bot after RED/BLUE/DRAW
+    if (state.winner !== undefined && state.winner !== "") return;  // any winner incl. DRAW
     if (state.currentPlayer !== state.botPlayer) return;
     let cancelled = false;
     const run = async () => {
@@ -522,7 +474,7 @@ export default function Home() {
   // ── game over ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state) return;
-    if (!state.winner) return;  // null/undefined/empty = game is still running
+    if (state.winner === undefined || state.winner === "") return;  // not yet set
     if (summaryFired.current) return;
     summaryFired.current = true;
     setSum(true);
@@ -582,39 +534,14 @@ export default function Home() {
     return () => clearTimeout(h);
   }, [gameId, placed, letter, JSON.stringify(path)]);
 
-
-  // Balatro-like expectation preview: select a Letter Market tile, then show best cells.
-  useEffect(() => {
-    if (!gameId || !letter || !state || state.winner || !human()) {
-      setLetterMoves([]); setHoverMove(null); return;
-    }
-    let cancelled = false;
-    setLetterPreviewLoading(true);
-    getLetterPreview(gameId, letter).then(res => {
-      if (cancelled) return;
-      setLetterMoves(res?.moves || []);
-    }).catch(() => {
-      if (!cancelled) setLetterMoves([]);
-    }).finally(() => {
-      if (!cancelled) setLetterPreviewLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [gameId, letter, state?.turn, state?.currentPlayer, state?.winner]);
-
   // Auto-focus letter input when cell is placed
   useEffect(() => {
     if (placed && letterRef.current) letterRef.current.focus();
   }, [placed]);
 
   // ── board helpers ────────────────────────────────────────────────────────
-  const human = () => state && !thinking && !state.winner && state.currentPlayer !== state.botPlayer;
+  const human = () => state && !thinking && !state.winner && state.winner !== null && state.currentPlayer !== state.botPlayer;
   const isSel = (r,c) => path.some(p => p.row===r && p.col===c);
-  const movePreviewByCell = useMemo(() => {
-    const map = new Map();
-    (letterMoves || []).forEach(m => map.set(asKey(m.row, m.col), m));
-    return map;
-  }, [letterMoves]);
-  const bestLetterMove = letterMoves?.[0] || null;
 
   // Opponent cells adjacent to any placeable empty cell = attackable
   const opponent = state?.currentPlayer === "RED" ? "BLUE" : "RED";
@@ -742,7 +669,8 @@ export default function Home() {
     try {
       const next = await submitMove({game_id:gameId,row:placed.row,col:placed.col,letter,path});
       setState(next);
-      await syncMarketFromServer(gameId, next);
+      // Update market from state immediately
+      if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
 
       reset(); await refresh();
       getAlmost(gameId).then(setAlmost).catch(()=>{});
@@ -754,7 +682,7 @@ export default function Home() {
     try {
       const next = await seedMove(gameId,{row:placed.row,col:placed.col,letter});
       setState(next);
-      await syncMarketFromServer(gameId, next);
+      if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
 
       reset(); await refresh();
       getAlmost(gameId).then(setAlmost).catch(()=>{});
@@ -791,10 +719,9 @@ export default function Home() {
   const incPlaced = placed && path.some(p=>p.row===placed.row&&p.col===placed.col);
   const ok = preview?.isInDictionary && preview?.includesPlacedCell;
   const topMoves = [...(state?.moveHistory||[])].filter(m=>m.moveType==="WORD")
-    .sort((a,b)=>(b.territoryGained*2+b.wordScoreGained*1.5+b.fortifiedCellsGained*2+(b.captureCount?5:0)+(b.comboLabels?.length||0))
-                -(a.territoryGained*2+a.wordScoreGained*1.5+a.fortifiedCellsGained*2+(a.captureCount?5:0)+(a.comboLabels?.length||0)))
+    .sort((a,b)=>(b.territoryGained*2+b.wordScoreGained*1.5+b.fortifiedCellsGained*2+(b.captureCount?5:0))
+                -(a.territoryGained*2+a.wordScoreGained*1.5+a.fortifiedCellsGained*2+(a.captureCount?5:0)))
     .slice(0,3);
-  const bestMove = topMoves[0] || null;
 
   if (!state) return (
     <main className="loading">
@@ -919,19 +846,17 @@ export default function Home() {
             <div className="board-wrap"><div className="board">
               {state.board.map(row=>row.map(cell=>{
                 const k=asKey(cell.row,cell.col);
-                const mv = (!placed && letter) ? movePreviewByCell.get(k) : null;
                 return <Cell key={k} cell={cell}
                   sel={isSel(cell.row,cell.col)} placed={placed?.row===cell.row&&placed?.col===cell.col}
                   legal={!placed&&isLegal(cell.row,cell.col)}
-                  movePreview={mv}
-                  hotPreview={!!(hoverMove && mv && hoverMove.row === mv.row && hoverMove.col === mv.col)}
-                  onPreviewEnter={setHoverMove}
-                  onPreviewLeave={() => setHoverMove(null)}
                   changed={changedS.has(k)} captured={capturedS.has(k)} lockedNow={lockedS.has(k)}
                   disabled={isDim(cell.row,cell.col)} gen={animGen}
                   attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
                   inPath={inPathOpponentSet.has(k)}
-                  onClick={()=>clickCell(cell.row,cell.col)}/>;
+                  onClick={()=>clickCell(cell.row,cell.col)}/>
+                {(()=>{ const vp=valuePrev.find(p=>p.row===cell.row&&p.col===cell.col);
+                  return (vp&&!cell.letter)? <div key="vp" className={`vp-overlay vp-${vp.tier}`} title={vp.word?vp.word+' +'+vp.gain+'T':''}><span className="vp-num">+{vp.gain}</span>{vp.tier==='strong'&&<span className="vp-star">★</span>}</div>:null;
+                })()}
               }))}
             </div>
           </div>
@@ -939,22 +864,14 @@ export default function Home() {
 
           {/* ── Winner Banner ── */}
           {state.winner && (
-            <>
-              <div className="winner-banner">
-                {state.winner === "DRAW" ? "🤝 Draw" :
-                 state.winner === "RED"  ? "🔴 RED wins!" :
-                                           "🔵 BLUE wins!"}
-                <span className="winner-score">
-                  {state.winner !== "DRAW" && ` · ${Math.max(redT,blueT)}–${Math.min(redT,blueT)}`}
-                </span>
-              </div>
-              {bestMove && (
-                <div className="best-move-banner">
-                  Best Move: <strong>{bestMove.word}</strong> — {comboSummary(bestMove.comboLabels)}
-                  <span className="best-move-score"> +{bestMove.territoryGained}T</span>
-                </div>
-              )}
-            </>
+            <div className="winner-banner">
+              {state.winner === "DRAW" ? "🤝 Draw" :
+               state.winner === "RED"  ? "🔴 RED wins!" :
+                                         "🔵 BLUE wins!"}
+              <span className="winner-score">
+                {state.winner !== "DRAW" && ` · ${Math.max(redT,blueT)}–${Math.min(redT,blueT)}`}
+              </span>
+            </div>
           )}
 
           {/* ── Letter Market ── */}
@@ -967,28 +884,30 @@ export default function Home() {
                 </span>
               </div>
               <div className="lm-active">
-                {(market.active||[]).map((l,i) => {
-                  const s = (market.stats||[]).find(x => x.letter === l) || {letter:l, wordCount:0, bestGain:0, bestWord:'', roles:[]};
-                  return (
-                    <button key={`${l}-${i}`}
-                      className={`lm-tile ${letter===s.letter ? 'lm-selected' : ''}`}
-                      onClick={() => { setLetter(s.letter); setPath([]); setPlaced(null); setError(''); setPreview(null); setHoverMove(null); }}
-                      disabled={!human()}
-                      title={s.bestWord ? `Best: ${s.bestWord} +${s.bestGain}T` : 'No words available'}
-                    >
-                      <span className="lm-letter">{s.letter}</span>
-                      {s.wordCount > 0 ? (
-                        <span className="lm-stats">
-                          {s.bestGain > 0 && <span className="lm-gain">+{s.bestGain}T</span>}
-                          {s.wordCount > 0 && <span className="lm-count">{s.wordCount}w</span>}
-                          {s.roles?.length > 0 && <span className="lm-role">{s.roles[0].substring(0,3)}</span>}
-                        </span>
-                      ) : (
-                        <span className="lm-stats"><span className="lm-zero" style={{fontSize:10}}>updating</span></span>
-                      )}
-                    </button>
-                  );
-                })}
+                {(market.stats||[]).map((s,i) => (
+                  <button key={i}
+                    className={`lm-tile ${letter===s.letter ? 'lm-selected' : ''}`}
+                    onClick={() => {
+                      const ltr = s.letter;
+                      setLetter(ltr); setPath([]); setPlaced(null); setError(''); setPreview(null);
+                      setValuePrev([]);
+                      if (gameId && ltr) getLetterPreview(gameId, ltr).then(setValuePrev).catch(()=>{});
+                    }}
+                    disabled={!human()}
+                    title={s.bestWord ? `Best: ${s.bestWord} +${s.bestGain}T` : 'No words available'}
+                  >
+                    <span className="lm-letter">{s.letter}</span>
+                    {s.wordCount > 0 ? (
+                      <span className="lm-stats">
+                        {s.bestGain > 0 && <span className="lm-gain">+{s.bestGain}T</span>}
+                        {s.wordCount > 0 && <span className="lm-count">{s.wordCount}w</span>}
+                        {s.roles?.length > 0 && <span className="lm-role">{s.roles[0].substring(0,3)}</span>}
+                      </span>
+                    ) : (
+                      <span className="lm-stats"><span className="lm-zero" style={{fontSize:10}}>no words</span></span>
+                    )}
+                  </button>
+                ))}
                 {/* Free Letter (Wild) */}
                 {!market.freeLetterUsed ? (
                   <button className={`lm-tile lm-free ${showFreeInput ? 'lm-selected' : ''}`}
@@ -1006,27 +925,6 @@ export default function Home() {
                   </div>
                 )}
               </div>
-              {letter && !placed && !state.winner && (
-                <div className="lp-strip">
-                  {letterPreviewLoading ? (
-                    <span className="lp-muted">Checking best cells for <strong>{letter}</strong>…</span>
-                  ) : hoverMove ? (
-                    <>
-                      <span className="lp-main"><strong>{hoverMove.word}</strong> +{hoverMove.territoryGain}T</span>
-                      {hoverMove.wordScore > 0 && <span className="lp-chip">+{hoverMove.wordScore}W</span>}
-                      {hoverMove.captureCount > 0 && <span className="lp-chip lp-power">⚔ {hoverMove.captureCount} cap</span>}
-                      {hoverMove.comboLabels?.slice(0,3).map(x => <span key={x} className={String(x).startsWith("SYNERGY:") ? "lp-chip lp-synergy" : "lp-chip lp-combo"}>{comboLabelText(x)}</span>)}
-                    </>
-                  ) : bestLetterMove ? (
-                    <>
-                      <span className="lp-main">Best with <strong>{letter}</strong>: <strong>{bestLetterMove.word}</strong> +{bestLetterMove.territoryGain}T</span>
-                      <span className="lp-muted">Hover/tap highlighted cells to compare.</span>
-                    </>
-                  ) : (
-                    <span className="lp-muted">No strong preview for <strong>{letter}</strong>. Use it as setup or choose another tile.</span>
-                  )}
-                </div>
-              )}
               {showFreeInput && (
                 <div className="lm-free-row">
                   <input className="lm-free-input" maxLength={1}
@@ -1085,7 +983,15 @@ export default function Home() {
                         {preview.lockGain>0&&` · 🔒${preview.lockGain}`}
                         {preview.captureHappened&&<span className="pvcap"> ⚔ CAPTURE +{preview.captureCount||1}</span>}
                       </div>
-                      {preview.comboLabels?.length>0&&<div className="chips">{preview.comboLabels.map(x=><span key={x} className={comboLabelClass(x)}>{comboLabelText(x)}</span>)}</div>}
+                      {preview.comboLabels?.length>0&&<div className="chips">
+                        {preview.comboLabels.map((x,xi)=>{
+                          if(x.startsWith('SYNERGY:')){
+                            const msg=x.replace('SYNERGY:','').trim();
+                            return <span key={xi} className="chip combo synergy-chip" title={msg}>✦ SYNERGY</span>;
+                          }
+                          return <span key={xi} className="chip combo">{x}</span>;
+                        })}
+                      </div>}
                     </>
                 ):(
                   <div className="pvhint">
@@ -1213,13 +1119,6 @@ export default function Home() {
                   <div className="scres">{(dailyResult?.winner??state.winner)==="RED"?"✅ WIN":(dailyResult?.winner??state.winner)===null?"🤝 DRAW":"❌ LOSS"}</div>
                   <div className="muted tac">{(dailyResult?.turns??state.turn-1)} turns · Territory ×1.5 + Words</div>
                 </div>
-                {bestMove && (
-                  <div className="best-move-card">
-                    <div className="best-title">Best Move</div>
-                    <div><strong>{bestMove.word}</strong> — {comboSummary(bestMove.comboLabels)}</div>
-                    <div className="muted">+{bestMove.territoryGained}T +{bestMove.wordScoreGained}W{bestMove.captureCount ? ` · ${bestMove.captureCount} capture` : ""}</div>
-                  </div>
-                )}
                 {topMoves.length>0&&<><h3>Top Moves</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
 
                 {/* Share card */}
@@ -1263,13 +1162,6 @@ export default function Home() {
                   <div className="scrow"><span>🔴 RED</span><strong>{redT} cells</strong></div>
                   <div className="scrow"><span>🔵 BLUE</span><strong>{blueT} cells</strong></div>
                 </div>
-                {bestMove && (
-                  <div className="best-move-card">
-                    <div className="best-title">Best Move</div>
-                    <div><strong>{bestMove.word}</strong> — {comboSummary(bestMove.comboLabels)}</div>
-                    <div className="muted">+{bestMove.territoryGained}T +{bestMove.wordScoreGained}W{bestMove.captureCount ? ` · ${bestMove.captureCount} capture` : ""}</div>
-                  </div>
-                )}
                 {topMoves.length>0&&<><h3>Top Moves</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
                 <div className="modal-btns">
                   <button className="bprim" onClick={()=>boot(mode)}>New Game</button>
@@ -1345,7 +1237,7 @@ export default function Home() {
       .bwrap{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px;overflow-x:auto}
       .board-wrap{width:100%;overflow-x:auto;display:flex;justify-content:center;-webkit-overflow-scrolling:touch}
       .board{display:grid;grid-template-columns:repeat(7,58px);gap:5px;justify-content:center;min-width:max-content}
-      .cell{width:44px;height:44px;border:1.5px solid #c8c8c8;border-radius:9px;background:#fafafa;font-size:17px;font-weight:800;cursor:pointer;transition:background .12s}
+      .cell{position:relative;width:44px;height:44px;border:1.5px solid #c8c8c8;border-radius:9px;background:#fafafa;font-size:17px;font-weight:800;cursor:pointer;transition:background .12s}
       .cell.cr{background:rgba(192,57,43,.15);border-color:rgba(192,57,43,.3)}
       .cell.cb{background:rgba(34,113,179,.15);border-color:rgba(34,113,179,.3)}
       .cell.ft{border-width:3px;border-color:#111}
@@ -1387,19 +1279,14 @@ export default function Home() {
                        font-weight:800;cursor:pointer;font-size:13px}
       .lm-free-confirm:hover{background:#d97706}
 
-      .lp-strip{margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;
-                background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:7px 10px;
-                font-size:12px;color:#334155}
-      .lp-main{font-weight:700;color:#111827}
-      .lp-muted{color:#64748b;font-size:12px}
-      .lp-chip{background:#e0f2fe;color:#075985;border-radius:999px;padding:2px 7px;font-weight:700;font-size:11px}
-      .lp-power{background:#fee2e2;color:#991b1b}
-      .lp-combo{background:#fef3c7;color:#92400e}
-      .cell.mv{position:relative;border-color:#f59e0b!important;background:#fff7ed!important;box-shadow:inset 0 0 0 2px rgba(245,158,11,.25)}
-      .cell.mvpower{border-color:#8b5cf6!important;background:#f5f3ff!important;box-shadow:inset 0 0 0 2px rgba(139,92,246,.25)}
-      .cell.mvhot{outline:3px solid #111;outline-offset:-2px;transform:translateY(-1px)}
-      .mv-badge{position:absolute;right:2px;bottom:2px;background:#111;color:#fff;border-radius:999px;
-                min-width:18px;height:18px;line-height:18px;font-size:10px;font-weight:900;text-align:center;padding:0 4px}
+      /* Value Preview overlay */
+      .vp-overlay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+                  font-size:10px;font-weight:800;border-radius:4px;padding:1px 4px;
+                  pointer-events:none;white-space:nowrap;z-index:10}
+      .vp-basic{background:rgba(74,222,128,.85);color:#14532d}
+      .vp-good{background:rgba(250,204,21,.9);color:#713f12}
+      .vp-strong{background:rgba(139,92,246,.9);color:#fff}
+      .vp-star{margin-left:2px;font-size:9px}
 
       /* Synergy flash */
       .synergy-flash{background:linear-gradient(90deg,#1e1b4b,#312e81);color:#c7d2fe;
@@ -1411,14 +1298,13 @@ export default function Home() {
       [data-diff="Medium"]{background:#fef9c3;color:#854d0e}
       [data-diff="Hard"]{background:#fee2e2;color:#991b1b}
       .syn-tip{font-size:11px;color:#6b7280;font-style:italic;margin-top:4px;line-height:1.4}
+      .synergy-chip{background:linear-gradient(90deg,#312e81,#4338ca)!important;color:#c7d2fe!important;
+                    cursor:help}
 
       /* Winner banner */
       .winner-banner{background:#111;color:#fff;text-align:center;padding:14px;font-size:22px;
                      font-weight:900;border-radius:12px;margin-bottom:8px;letter-spacing:1px}
       .winner-score{font-size:16px;font-weight:400;color:#aaa;margin-left:8px}
-      .best-move-banner{background:#fff;border:1px solid #ddd;border-radius:10px;margin:0 0 18px;padding:10px 14px;
-        text-align:center;font-size:14px;box-shadow:0 1px 0 rgba(0,0,0,.03)}
-      .best-move-score{font-weight:900;color:#111;margin-left:6px}
 
       /* Synergy Card Modal */
       .syn-modal{max-width:520px;text-align:center}
@@ -1518,10 +1404,6 @@ export default function Home() {
       .sc{padding:6px 14px 12px}
       .chip{font-size:12px;border:1px solid #ddd;background:#f8f8f8;border-radius:999px;padding:3px 8px}
       .chip.combo{background:#fff9c4;border-color:#f0d000;font-weight:700}
-      .chip.synergy{background:#f3e8ff;border-color:#a855f7;color:#581c87}
-      .lp-synergy{background:#f3e8ff;border-color:#a855f7;color:#581c87}
-      .best-move-card{border:1px solid #e5e7eb;border-radius:12px;background:#fafafa;padding:12px;margin:14px 0}
-      .best-title{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#777;font-weight:900;margin-bottom:4px}
       .muted{color:#999;font-size:12px;padding:4px 0}
       .hist{max-height:360px;overflow-y:auto}
       .hi{padding:8px 14px;border-bottom:1px solid #f0f0f0}
