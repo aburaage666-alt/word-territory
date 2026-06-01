@@ -2,6 +2,7 @@ from typing import List, Optional, Literal
 from pydantic import BaseModel
 
 Player = Literal["RED", "BLUE"]
+Winner = Literal["RED", "BLUE", "DRAW"]
 BotLevel = Literal["normal", "strong"]
 
 
@@ -52,7 +53,7 @@ class GameState(BaseModel):
     recentMoves: List[str]
     moveHistory: List[MoveHistoryItem] = []
     scores: Scores
-    winner: Optional[Player] = None
+    winner: Optional[Winner] = None
     consecutivePasses: int = 0
     vsBot: bool = True
     botPlayer: Player = "BLUE"
