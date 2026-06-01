@@ -64,7 +64,7 @@ function buildShare(num, ds, r) {
   const capturePct = Math.round((r.redScore / totalCells) * 100);
   const rank = getRank(capturePct);
   const rankEmoji = getRankEmoji(capturePct);
-  const result = r.winner === "RED" ? "WIN 🎉" : r.winner === null ? "DRAW 🤝" : "LOSS 😤";
+  const result = r.winner === "RED" ? "WIN 🎉" : r.winner === "DRAW" ? "DRAW 🤝" : "LOSS 😤";
   const emojiBoard = r.emojiBoard || "";
 
   return [
@@ -316,6 +316,9 @@ export default function Home() {
   const [showSuggest, setSuggest] = useState(true);
   const [showPremium, setPremium] = useState(false);
   const [showLB,      setShowLB]  = useState(false);  // ④
+  const [showSynergy, setShowSynergy] = useState(false);
+  const [synergyOpts, setSynergyOpts] = useState([]);
+  const [synergy, setSynergy] = useState("");
 
   // Combo banner persistence
   const [comboBanner, setCombo]   = useState([]);
@@ -363,7 +366,7 @@ export default function Home() {
   function reset() {
     setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null);
     setSum(false); setCopied(false); setShareText(""); setNickname(""); setMyRank(null);
-    setSubmitted(false); summaryFired.current = false;
+    setSubmitted(false); setShowSynergy(false); summaryFired.current = false;
   }
   async function boot(m = mode) {
     let lastErr;
@@ -435,7 +438,7 @@ export default function Home() {
   // ── bot auto-move ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state || !gameId) return;
-    if (state.winner !== undefined && state.winner !== "") return;  // any winner incl. DRAW
+    if (state.winner) return;  // stop when RED / BLUE / DRAW is set
     if (state.currentPlayer !== state.botPlayer) return;
     let cancelled = false;
     const run = async () => {
@@ -460,7 +463,7 @@ export default function Home() {
   // ── game over ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state) return;
-    if (state.winner === undefined || state.winner === "") return;  // not yet set
+    if (!state.winner) return;  // not yet set; null/undefined means game still running
     if (summaryFired.current) return;
     summaryFired.current = true;
     setSum(true);
@@ -526,7 +529,7 @@ export default function Home() {
   }, [placed]);
 
   // ── board helpers ────────────────────────────────────────────────────────
-  const human = () => state && !thinking && !state.winner && state.winner !== null && state.currentPlayer !== state.botPlayer;
+  const human = () => !!(state && !thinking && !state.winner && state.currentPlayer !== state.botPlayer);
   const isSel = (r,c) => path.some(p => p.row===r && p.col===c);
 
   // Opponent cells adjacent to any placeable empty cell = attackable
@@ -746,7 +749,7 @@ export default function Home() {
       <div className="hdr">
         <div className="hdr-l">
           <h1>WORD TERRITORY{dailyMode&&dailyInfo&&<span className="dpill">Daily #{dailyInfo.dayNumber}</span>}</h1>
-          <p className="sub">Opening: {state.openingName} · {thinking?"Bot thinking…":state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
+          <p className="sub">Opening: {state.openingName} · {state.winner?"Game Over":thinking?"Bot thinking…":state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
         </div>
         <div className="hdr-r">
           {!dailyMode&&(
@@ -1054,7 +1057,7 @@ export default function Home() {
                   onClick={() => {
                     selectSynergy(gameId, card.key)
                       .then(() => { setSynergy(card.key); setShowSynergy(false); })
-                      .catch(() => { setSynergy(card.key); setShowSynergy(false); });
+                      .catch(e => { setError(e.message || "Could not select strategy"); setShowSynergy(false); });
                   }}
                 >
                   <div className="syn-icon">{card.icon}</div>
@@ -1082,7 +1085,7 @@ export default function Home() {
                 <div className="scard">
                   <div className="scrow"><span>🔴 YOU</span><strong>{redT} cells</strong></div>
                   <div className="scrow"><span>🔵 BOT</span><strong>{blueT} cells</strong></div>
-                  <div className="scres">{(dailyResult?.winner??state.winner)==="RED"?"✅ WIN":(dailyResult?.winner??state.winner)===null?"🤝 DRAW":"❌ LOSS"}</div>
+                  <div className="scres">{(dailyResult?.winner??state.winner)==="RED"?"✅ WIN":(dailyResult?.winner??state.winner)==="DRAW"?"🤝 DRAW":"❌ LOSS"}</div>
                   <div className="muted tac">{(dailyResult?.turns??state.turn-1)} turns · Territory ×1.5 + Words</div>
                 </div>
                 {topMoves.length>0&&<><h3>Top Moves</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
