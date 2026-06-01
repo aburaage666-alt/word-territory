@@ -470,7 +470,7 @@ export default function Home() {
   // ── game over ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state) return;
-    if (state.winner === undefined || state.winner === "") return;  // not yet set
+    if (!state.winner) return;  // null/undefined/empty = game is still running
     if (summaryFired.current) return;
     summaryFired.current = true;
     setSum(true);
