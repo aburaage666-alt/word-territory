@@ -161,6 +161,19 @@ function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled
   );
 }
 
+// ── Combo label helpers ──────────────────────────────────────────────────────
+function comboLabelText(x) {
+  if (!x) return "";
+  return String(x).startsWith("SYNERGY:") ? String(x).replace(/^SYNERGY:\s*/, "") : String(x);
+}
+function comboLabelClass(x) {
+  return String(x || "").startsWith("SYNERGY:") ? "chip combo synergy" : "chip combo";
+}
+function comboSummary(labels) {
+  const arr = (labels || []).map(comboLabelText).filter(Boolean);
+  return arr.length ? arr.join(" + ") : "solid territory gain";
+}
+
 // ── HistItem ──────────────────────────────────────────────────────────────────
 function HistItem({ m }) {
   return (
@@ -169,7 +182,7 @@ function HistItem({ m }) {
       {m.moveType === "WORD" && (
         <div className="hi-stats">+{m.territoryGained}T +{m.wordScoreGained}W 🔒{m.fortifiedCellsGained}{m.captureCount > 0 ? ` ✦${m.captureCount}cap` : ""}</div>
       )}
-      {m.comboLabels?.length > 0 && <div className="chips">{m.comboLabels.map(x => <span key={x} className="chip combo">{x}</span>)}</div>}
+      {m.comboLabels?.length > 0 && <div className="chips">{m.comboLabels.map(x => <span key={x} className={comboLabelClass(x)}>{comboLabelText(x)}</span>)}</div>}
     </div>
   );
 }
@@ -778,9 +791,10 @@ export default function Home() {
   const incPlaced = placed && path.some(p=>p.row===placed.row&&p.col===placed.col);
   const ok = preview?.isInDictionary && preview?.includesPlacedCell;
   const topMoves = [...(state?.moveHistory||[])].filter(m=>m.moveType==="WORD")
-    .sort((a,b)=>(b.territoryGained*2+b.wordScoreGained*1.5+b.fortifiedCellsGained*2+(b.captureCount?5:0))
-                -(a.territoryGained*2+a.wordScoreGained*1.5+a.fortifiedCellsGained*2+(a.captureCount?5:0)))
+    .sort((a,b)=>(b.territoryGained*2+b.wordScoreGained*1.5+b.fortifiedCellsGained*2+(b.captureCount?5:0)+(b.comboLabels?.length||0))
+                -(a.territoryGained*2+a.wordScoreGained*1.5+a.fortifiedCellsGained*2+(a.captureCount?5:0)+(a.comboLabels?.length||0)))
     .slice(0,3);
+  const bestMove = topMoves[0] || null;
 
   if (!state) return (
     <main className="loading">
@@ -925,14 +939,22 @@ export default function Home() {
 
           {/* ── Winner Banner ── */}
           {state.winner && (
-            <div className="winner-banner">
-              {state.winner === "DRAW" ? "🤝 Draw" :
-               state.winner === "RED"  ? "🔴 RED wins!" :
-                                         "🔵 BLUE wins!"}
-              <span className="winner-score">
-                {state.winner !== "DRAW" && ` · ${Math.max(redT,blueT)}–${Math.min(redT,blueT)}`}
-              </span>
-            </div>
+            <>
+              <div className="winner-banner">
+                {state.winner === "DRAW" ? "🤝 Draw" :
+                 state.winner === "RED"  ? "🔴 RED wins!" :
+                                           "🔵 BLUE wins!"}
+                <span className="winner-score">
+                  {state.winner !== "DRAW" && ` · ${Math.max(redT,blueT)}–${Math.min(redT,blueT)}`}
+                </span>
+              </div>
+              {bestMove && (
+                <div className="best-move-banner">
+                  Best Move: <strong>{bestMove.word}</strong> — {comboSummary(bestMove.comboLabels)}
+                  <span className="best-move-score"> +{bestMove.territoryGained}T</span>
+                </div>
+              )}
+            </>
           )}
 
           {/* ── Letter Market ── */}
@@ -993,7 +1015,7 @@ export default function Home() {
                       <span className="lp-main"><strong>{hoverMove.word}</strong> +{hoverMove.territoryGain}T</span>
                       {hoverMove.wordScore > 0 && <span className="lp-chip">+{hoverMove.wordScore}W</span>}
                       {hoverMove.captureCount > 0 && <span className="lp-chip lp-power">⚔ {hoverMove.captureCount} cap</span>}
-                      {hoverMove.comboLabels?.slice(0,3).map(x => <span key={x} className="lp-chip lp-combo">{x}</span>)}
+                      {hoverMove.comboLabels?.slice(0,3).map(x => <span key={x} className={String(x).startsWith("SYNERGY:") ? "lp-chip lp-synergy" : "lp-chip lp-combo"}>{comboLabelText(x)}</span>)}
                     </>
                   ) : bestLetterMove ? (
                     <>
@@ -1063,7 +1085,7 @@ export default function Home() {
                         {preview.lockGain>0&&` · 🔒${preview.lockGain}`}
                         {preview.captureHappened&&<span className="pvcap"> ⚔ CAPTURE +{preview.captureCount||1}</span>}
                       </div>
-                      {preview.comboLabels?.length>0&&<div className="chips">{preview.comboLabels.map(x=><span key={x} className="chip combo">{x}</span>)}</div>}
+                      {preview.comboLabels?.length>0&&<div className="chips">{preview.comboLabels.map(x=><span key={x} className={comboLabelClass(x)}>{comboLabelText(x)}</span>)}</div>}
                     </>
                 ):(
                   <div className="pvhint">
@@ -1191,6 +1213,13 @@ export default function Home() {
                   <div className="scres">{(dailyResult?.winner??state.winner)==="RED"?"✅ WIN":(dailyResult?.winner??state.winner)===null?"🤝 DRAW":"❌ LOSS"}</div>
                   <div className="muted tac">{(dailyResult?.turns??state.turn-1)} turns · Territory ×1.5 + Words</div>
                 </div>
+                {bestMove && (
+                  <div className="best-move-card">
+                    <div className="best-title">Best Move</div>
+                    <div><strong>{bestMove.word}</strong> — {comboSummary(bestMove.comboLabels)}</div>
+                    <div className="muted">+{bestMove.territoryGained}T +{bestMove.wordScoreGained}W{bestMove.captureCount ? ` · ${bestMove.captureCount} capture` : ""}</div>
+                  </div>
+                )}
                 {topMoves.length>0&&<><h3>Top Moves</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
 
                 {/* Share card */}
@@ -1234,6 +1263,13 @@ export default function Home() {
                   <div className="scrow"><span>🔴 RED</span><strong>{redT} cells</strong></div>
                   <div className="scrow"><span>🔵 BLUE</span><strong>{blueT} cells</strong></div>
                 </div>
+                {bestMove && (
+                  <div className="best-move-card">
+                    <div className="best-title">Best Move</div>
+                    <div><strong>{bestMove.word}</strong> — {comboSummary(bestMove.comboLabels)}</div>
+                    <div className="muted">+{bestMove.territoryGained}T +{bestMove.wordScoreGained}W{bestMove.captureCount ? ` · ${bestMove.captureCount} capture` : ""}</div>
+                  </div>
+                )}
                 {topMoves.length>0&&<><h3>Top Moves</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
                 <div className="modal-btns">
                   <button className="bprim" onClick={()=>boot(mode)}>New Game</button>
@@ -1380,6 +1416,9 @@ export default function Home() {
       .winner-banner{background:#111;color:#fff;text-align:center;padding:14px;font-size:22px;
                      font-weight:900;border-radius:12px;margin-bottom:8px;letter-spacing:1px}
       .winner-score{font-size:16px;font-weight:400;color:#aaa;margin-left:8px}
+      .best-move-banner{background:#fff;border:1px solid #ddd;border-radius:10px;margin:0 0 18px;padding:10px 14px;
+        text-align:center;font-size:14px;box-shadow:0 1px 0 rgba(0,0,0,.03)}
+      .best-move-score{font-weight:900;color:#111;margin-left:6px}
 
       /* Synergy Card Modal */
       .syn-modal{max-width:520px;text-align:center}
@@ -1479,6 +1518,10 @@ export default function Home() {
       .sc{padding:6px 14px 12px}
       .chip{font-size:12px;border:1px solid #ddd;background:#f8f8f8;border-radius:999px;padding:3px 8px}
       .chip.combo{background:#fff9c4;border-color:#f0d000;font-weight:700}
+      .chip.synergy{background:#f3e8ff;border-color:#a855f7;color:#581c87}
+      .lp-synergy{background:#f3e8ff;border-color:#a855f7;color:#581c87}
+      .best-move-card{border:1px solid #e5e7eb;border-radius:12px;background:#fafafa;padding:12px;margin:14px 0}
+      .best-title{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#777;font-weight:900;margin-bottom:4px}
       .muted{color:#999;font-size:12px;padding:4px 0}
       .hist{max-height:360px;overflow-y:auto}
       .hi{padding:8px 14px;border-bottom:1px solid #f0f0f0}
