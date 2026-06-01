@@ -758,6 +758,21 @@ def generate_letter_market(state: GameState) -> tuple[list[str], list[str]]:
         l = weighted_pick(used)
         active.append(l); used.add(l)
 
+    # Late-game fallback: if board is dense (>70% filled) and no playable letters,
+    # fill with best Almost-completing letters
+    board_total = BOARD_SIZE * BOARD_SIZE
+    filled = sum(1 for r in range(BOARD_SIZE) for c in range(BOARD_SIZE) if state.board[r][c].letter)
+    if filled / board_total > 0.70 and all(l not in playable for l in active):
+        try:
+            almost_fb = find_almost_words(state, limit=12)
+            for a in almost_fb:
+                l = a["needs"]
+                if l not in board_letters and l not in set(active):
+                    active[-1] = l  # replace last slot
+                    break
+        except Exception:
+            pass
+
     # Ensure at least 1 vowel in active 3
     if not any(l in VOWELS for l in active):
         # replace the weakest (last slot) with a vowel
