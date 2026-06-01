@@ -2,7 +2,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard,
+  botMove, autoMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard,
   getAlmost, getLetterPreview, getMarket, getSuggestions, getSynergyOptions, selectSynergy, getThreat, createAsyncMatch, getAsyncMatch, submitAsyncMove, seedAsyncMove, passAsyncTurn,
   joinWaitlist, passTurn, previewMove, seedMove, submitDailyScore, submitMove,
   useFreeLetter,
@@ -373,6 +373,9 @@ export default function Home() {
   const [asyncToken,  setAsyncToken]  = useState("");
   const [asyncRole,   setAsyncRole]   = useState("");
   const [inviteUrl,   setInviteUrl]   = useState("");
+  const [spectatorMode, setSpectatorMode] = useState(false);
+  const [spectatorSteps, setSpectatorSteps] = useState(0);
+  const [spectatorNote, setSpectatorNote] = useState("");
   const comboTimer = useRef(null);
   const [animGen,  setAnimGen]    = useState(0);
 
@@ -442,6 +445,7 @@ export default function Home() {
       try {
         const d = await createGame({ botLevel: m });
         setGameId(d.game_id); setState(d.state); setDailyMode(false);
+        setSpectatorMode(false); setSpectatorSteps(0); setSpectatorNote("");
         reset(); setAnimGen(0); setBootMsg("");
         if (d.state?.marketLetters?.length > 0) {
           setMarket({ active: d.state.marketLetters, preview: d.state.previewLetters||[],
@@ -452,7 +456,6 @@ export default function Home() {
           try { const mk = await getMarket(d.game_id); setMarket(mk); } catch(_) {}
         }
         getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
-    getThreat(d.game_id).then(setThreats).catch(() => setThreats([]));
         getThreat(d.game_id).then(setThreats).catch(() => setThreats([]));
         // Show synergy card selection
         getSynergyOptions(d.game_id).then(r => {
@@ -475,6 +478,7 @@ export default function Home() {
     if (!dailyInfo) return;
     const d = await createDailyGame();
     setGameId(d.game_id); setState(d.state); setDailyMode(true);
+    setSpectatorMode(false); setSpectatorSteps(0); setSpectatorNote("");
     reset(); setAnimGen(0);
     if (d.state?.marketLetters?.length > 0) {
       setMarket({ active: d.state.marketLetters, preview: d.state.previewLetters||[],
@@ -491,6 +495,57 @@ export default function Home() {
       }).catch(() => {});
     getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
   }
+
+  async function startSpectatorDemo() {
+    try {
+      setError("");
+      setBootMsg("Preparing spectator demo…");
+      const d = await createGame({ botLevel: "strong" });
+      setGameId(d.game_id);
+      setState(d.state);
+      setDailyMode(false);
+      setAsyncMode(false);
+      setInviteUrl("");
+      setSpectatorMode(true);
+      setSpectatorSteps(0);
+      setSpectatorNote("Watch how words reshape the map.");
+      reset();
+      setAnimGen(0);
+      setBootMsg("");
+      if (d.state?.marketLetters?.length > 0) {
+        setMarket({
+          active: d.state.marketLetters,
+          preview: d.state.previewLetters || [],
+          stats: d.state.marketLetters.map(l => ({letter:l,wordCount:0,bestGain:0,bestWord:'',roles:[]})),
+          freeLetterUsed: !!d.state.freeLetterUsed,
+        });
+        try { const mk = await getMarket(d.game_id); setMarket(mk); } catch(_) {}
+      }
+      try { setSugg(await getSuggestions(d.game_id)); } catch { setSugg([]); }
+      try { setThreats(await getThreat(d.game_id)); } catch { setThreats([]); }
+      getSynergyOptions(d.game_id).then(r => {
+        const options = r.options || [];
+        setSynergyOpts(options);
+        if (options[0]?.key) {
+          selectSynergy(d.game_id, options[0].key).then(sel => {
+            setSynergy(sel.selected || options[0].key);
+            setShowSynergy(false);
+          }).catch(() => {
+            setSynergy(r.selected || options[0].key || "");
+            setShowSynergy(false);
+          });
+        } else {
+          setSynergy(r.selected || "");
+          setShowSynergy(false);
+        }
+      }).catch(() => {});
+    } catch(e) {
+      setSpectatorMode(false);
+      setBootMsg("");
+      setError(e.message || "Could not start spectator demo");
+    }
+  }
+
   useEffect(() => {
     try {
       const qs = new URLSearchParams(window.location.search);
@@ -517,7 +572,7 @@ export default function Home() {
   // ── bot auto-move ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state || !gameId) return;
-    if (asyncMode) return;
+    if (asyncMode || spectatorMode) return;
     if (state.winner && state.winner !== "") return;  // stops on RED/BLUE/DRAW
     if (state.currentPlayer !== state.botPlayer) return;
     let cancelled = false;
@@ -538,7 +593,48 @@ export default function Home() {
     };
     run();
     return () => { cancelled = true; setThinking(false); };
-  }, [state?.turn, state?.currentPlayer]);
+  }, [state?.turn, state?.currentPlayer, spectatorMode]);
+
+  // ── spectator demo auto-play ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!spectatorMode || !state || !gameId) return;
+    if (asyncMode) return;
+    if (state.winner && state.winner !== "") {
+      setSpectatorNote("Battle Report ready — this is how words became territory.");
+      return;
+    }
+    let cancelled = false;
+    const combos = state.lastComboLabels || [];
+    const hasHighlight = combos.some(x => String(x).includes("CAPTURE") || String(x).includes("BRIDGE") || String(x).includes("LOCK") || String(x).includes("SYNERGY"));
+    const delay = hasHighlight ? 1700 : 850;
+    const run = async () => {
+      setThinking(true);
+      try {
+        await new Promise(r => setTimeout(r, delay));
+        if (cancelled) return;
+        const next = await autoMove(gameId);
+        if (cancelled) return;
+        setState(next);
+        setSpectatorSteps(n => n + 1);
+        reset();
+        try { setSugg(await getSuggestions(gameId)); } catch { setSugg([]); }
+        try { setThreats(await getThreat(gameId)); } catch { setThreats([]); }
+        const last = next.moveHistory?.[next.moveHistory.length - 1];
+        if (last?.comboLabels?.length) {
+          setSpectatorNote(`${last.player} reshaped the map: ${terrainMoveLabel(last)}`);
+        } else if (last?.word && last.word !== "SEED") {
+          setSpectatorNote(`${last.player} claimed ground with ${last.word}.`);
+        } else {
+          setSpectatorNote("Bots are probing the frontier…");
+        }
+      } catch(e) {
+        if (!cancelled) setError(e.message || "Spectator demo failed");
+      }
+      if (!cancelled) setThinking(false);
+    };
+    run();
+    return () => { cancelled = true; setThinking(false); };
+  }, [spectatorMode, state?.turn, state?.currentPlayer, gameId]);
 
   // ── game over ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -615,7 +711,7 @@ export default function Home() {
   }, [placed]);
 
   // ── board helpers ────────────────────────────────────────────────────────
-  const human = () => state && !thinking && !state.winner && (asyncMode ? state.currentPlayer === asyncRole : state.currentPlayer !== state.botPlayer);
+  const human = () => state && !spectatorMode && !thinking && !state.winner && (asyncMode ? state.currentPlayer === asyncRole : state.currentPlayer !== state.botPlayer);
   const isSel = (r,c) => path.some(p => p.row===r && p.col===c);
 
   // Opponent cells adjacent to any placeable empty cell = attackable
@@ -851,7 +947,7 @@ export default function Home() {
       <div className="hdr">
         <div className="hdr-l">
           <h1>WORD TERRITORY{dailyMode&&dailyInfo&&<span className="dpill">Daily #{dailyInfo.dayNumber}</span>}</h1>
-          <p className="sub">Opening: {state.openingName} · {asyncMode ? `Async PvP · You are ${asyncRole}` : `Bot: ${state.botStyle || "Raider"}`} · {thinking?"Bot thinking…":asyncMode ? (state.currentPlayer===asyncRole?`Your turn (${asyncRole})`:`Waiting for ${state.currentPlayer}`) : state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
+          <p className="sub">Opening: {state.openingName} · {spectatorMode ? `Spectator Mode · ${state.botStyle || "Raider"} duel` : asyncMode ? `Async PvP · You are ${asyncRole}` : `Bot: ${state.botStyle || "Raider"}`} · {spectatorMode ? "Bot vs Bot" : thinking?"Bot thinking…":asyncMode ? (state.currentPlayer===asyncRole?`Your turn (${asyncRole})`:`Waiting for ${state.currentPlayer}`) : state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
         </div>
         <div className="hdr-r">
           {!dailyMode&&(
@@ -882,7 +978,9 @@ export default function Home() {
             ?<button className="bprim" onClick={()=>boot(mode)}>← Free Play</button>
             :<button className="bprim" onClick={()=>boot(mode)}>New Game</button>
           }
-          <button className="bsm" onClick={async()=>{try{const d=await createAsyncMatch({botLevel:mode}); setAsyncMode(true); setAsyncToken(d.redToken); setAsyncRole('RED'); setGameId(d.game_id); setState(d.state); setDailyMode(false); setInviteUrl(`${window.location.origin}${d.blueUrl}`); setMarket({active:d.state.marketLetters||[], preview:d.state.previewLetters||[], stats:[], freeLetterUsed:!!d.state.freeLetterUsed}); await refresh(d.game_id);}catch(e){setError(e.message||'Could not create async match');}}}>Async PvP</button>
+          <button className="bsm demo-btn" onClick={startSpectatorDemo}>▶ Watch Demo</button>
+          {spectatorMode&&<button className="bsm" onClick={()=>{setSpectatorMode(false); setSpectatorNote("Demo paused. Press New Game to play.");}}>Stop Demo</button>}
+          <button className="bsm" onClick={async()=>{try{const d=await createAsyncMatch({botLevel:mode}); setAsyncMode(true); setSpectatorMode(false); setAsyncToken(d.redToken); setAsyncRole('RED'); setGameId(d.game_id); setState(d.state); setDailyMode(false); setInviteUrl(`${window.location.origin}${d.blueUrl}`); setMarket({active:d.state.marketLetters||[], preview:d.state.previewLetters||[], stats:[], freeLetterUsed:!!d.state.freeLetterUsed}); await refresh(d.game_id);}catch(e){setError(e.message||'Could not create async match');}}}>Async PvP</button>
           {asyncMode&&<button className="bsm" onClick={async()=>{try{const d=await getAsyncMatch(gameId, asyncToken); setState(d.state); await refresh(gameId);}catch(e){setError(e.message||'Could not refresh match');}}}>Refresh Match</button>}
         </div>
       </div>
@@ -927,7 +1025,8 @@ export default function Home() {
       {/* ── banners ── */}
       {dailyMode&&<div className="dbanner">🗓️ Daily #{dailyInfo?.dayNumber} · {dailyInfo?.dateStr} · Strong Bot · {state.botStyle || "Raider"}{streak>1?` · 🔥 ${streak} day streak`:""}</div>}
       {asyncMode&&inviteUrl&&<div className="dbanner async-banner">🔗 Async PvP invite: <button className="link-copy" onClick={async()=>{try{await navigator.clipboard.writeText(inviteUrl); setCopied(true); setTimeout(()=>setCopied(false),2000);}catch{}}}>{copied?'Copied!':'Copy BLUE link'}</button></div>}
-      {thinking&&<div className="bnr thinking">Bot is thinking…</div>}
+      {spectatorMode&&<div className="dbanner demo-banner">🎬 Spectator Mode · Bot vs Bot · {spectatorNote || "Words become territory. Watch the map reshape itself."}</div>}
+      {thinking&&<div className="bnr thinking">{spectatorMode?"Spectator bots are moving…":"Bot is thinking…"}</div>}
       {synergyFlash&&<div className="bnr synergy-flash">{synergyFlash}</div>}
           {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
       {error&&<div className="bnr err">{error}<button className="bx" onClick={()=>setError("")}>✕</button></div>}
@@ -1319,6 +1418,7 @@ export default function Home() {
       .bsm{padding:8px 12px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer;font-size:13px;white-space:nowrap}
       .bsm:hover{background:#f5f5f5}
       .prem-btn{border-color:#d4af37;color:#b8860b;font-weight:700}
+      .demo-btn{border-color:#6d28d9;color:#5b21b6;font-weight:800;background:#faf5ff}
       .bprim{padding:9px 16px;border-radius:10px;border:none;background:#111;color:#fff;cursor:pointer;font-size:14px;font-weight:700;white-space:nowrap}
       .bprim:hover{background:#333}
 
@@ -1339,6 +1439,7 @@ export default function Home() {
       .dbanner{background:#111;color:#fff;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-weight:700;font-size:13px}
       .bnr{padding:10px 14px;border-radius:10px;margin-bottom:10px;font-size:14px}
       .thinking{background:#eef3ff;color:#1a47a0}
+      .demo-banner{background:linear-gradient(90deg,#111827,#5b21b6);color:#fff}
       .combo{background:#fff9c4;font-weight:800;text-align:center;font-size:16px;border:2px solid #f5d000}
       .err{background:#ffeaea;color:#8b1a1a;display:flex;justify-content:space-between;align-items:center}
       .bx{background:none;border:none;cursor:pointer;font-size:16px;color:#8b1a1a}
