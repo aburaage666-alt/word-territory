@@ -862,11 +862,11 @@ export default function Home() {
               <div className="lm-header">
                 <span className="lm-title">🎴 Letter Market</span>
                 <span className="lm-preview">
-                  Next: {market.preview.map((l,i) => <span key={i} className="lm-prev-chip">{l}</span>)}
+                  Next: {(market.preview||[]).map((l,i) => <span key={i} className="lm-prev-chip">{l}</span>)}
                 </span>
               </div>
               <div className="lm-active">
-                {market.stats.map((s,i) => (
+                {(market.stats||[]).map((s,i) => (
                   <button key={i}
                     className={`lm-tile ${letter===s.letter ? 'lm-selected' : ''}`}
                     onClick={() => { setLetter(s.letter); setPath([]); setPlaced(null); setError(''); setPreview(null); }}
@@ -988,16 +988,12 @@ export default function Home() {
 
         {/* side panel */}
         <div className="scol">
-          {synergy && synergyOpts.length > 0 && (() => {
-            const sc = synergyOpts.find(c => c.key === synergy);
-            if (!sc) return null;
-            return (
-              <div className="syn-active">
-                {sc.icon}{' '}<strong>{sc.name}</strong>
-                <span className="syn-active-effect">{sc.effect}</span>
-              </div>
-            );
-          })()}
+          {synergy && (() => { const sc = synergyOpts.find(c=>c.key===synergy); return sc ? (
+            <div className="syn-active">
+              {sc.icon} <strong>{sc.name}</strong>
+              <span className="syn-active-effect">{sc.effect}</span>
+            </div>
+          ) : null; })()}
           {almost.length > 0 && (
             <div className="almost-box">
               <div className="almost-title">🀄 Almost — place one letter to make:</div>
@@ -1053,7 +1049,7 @@ export default function Home() {
             <h2 style={{marginBottom:6}}>🎴 Choose Your Strategy</h2>
             <p style={{fontSize:13,color:'#888',marginBottom:20}}>Pick one card. It stays active the whole game.</p>
             <div className="syn-cards">
-              {synergyOpts.map(card => (
+              {(synergyOpts||[]).map(card => (
                 <button key={card.key} className="syn-card"
                   onClick={() => {
                     selectSynergy(gameId, card.key)
