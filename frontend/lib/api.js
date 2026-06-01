@@ -73,6 +73,22 @@ export async function botMove(gameId) {
   return readJson(res);
 }
 
+export async function getSynergyOptions(gameId) {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/synergy-options`, {}, 5000);
+    return readJson(res);
+  } catch { return { options: [], selected: "" }; }
+}
+
+export async function selectSynergy(gameId, card) {
+  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/select-synergy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ card }),
+  });
+  return readJson(res);
+}
+
 export async function getMarket(gameId) {
   try {
     const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/market`, {}, 5000);
