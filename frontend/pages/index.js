@@ -985,7 +985,7 @@ export default function Home() {
             <div className="brow">
               <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word ⚔" : "Submit"}</button>
               {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()} title={state?.selectedSynergy==="SEED_TACTICIAN" ? "Seed (free — +3T next word)" : "Seed (opponent +1T)"}>
-              Seed{state?.selectedSynergy!=="SEED_TACTICIAN" && <span style={{fontSize:10,color:"#e63946",marginLeft:3}}>−1T</span>}
+              Seed{state?.selectedSynergy!=="SEED_TACTICIAN" && <span style={{fontSize:10,color:"#e63946",marginLeft:3}}>-1T</span>}
             </button>}
               <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
               {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
