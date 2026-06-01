@@ -34,6 +34,27 @@ def init_db():
                 submitted_at TEXT DEFAULT (datetime('now'))
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS async_games (
+                game_id TEXT PRIMARY KEY,
+                red_token TEXT NOT NULL,
+                blue_token TEXT NOT NULL,
+                state_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS async_moves (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                turn INTEGER NOT NULL,
+                player TEXT NOT NULL,
+                move_json TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
         conn.commit()
 
 init_db()
@@ -54,6 +75,7 @@ from engine import (
     advance_market,
     get_market_stats,
     get_letter_preview_moves,
+    get_threat_preview,
     pass_turn,
     preview_move,
     validate_and_apply_move,
@@ -408,6 +430,126 @@ def get_almost(game_id: str):
         return {"almost": []}
 
 
+
+
+# ── Async PvP MVP ────────────────────────────────────────────────────────────
+
+def _state_to_json(state: GameState) -> str:
+    if hasattr(state, "model_dump_json"):
+        return state.model_dump_json()
+    return state.json()
+
+
+def _state_from_json(raw: str) -> GameState:
+    if hasattr(GameState, "model_validate_json"):
+        return GameState.model_validate_json(raw)
+    return GameState.parse_raw(raw)
+
+
+def _load_async_game(game_id: str, token: str):
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM async_games WHERE game_id=?", (game_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Async game not found")
+    if token == row["red_token"]:
+        player = "RED"
+    elif token == row["blue_token"]:
+        player = "BLUE"
+    else:
+        raise HTTPException(status_code=403, detail="Invalid async match token")
+    state = _state_from_json(row["state_json"])
+    return row, state, player
+
+
+def _save_async_state(game_id: str, state: GameState, move_payload: dict | None = None):
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE async_games SET state_json=?, status=?, updated_at=datetime('now') WHERE game_id=?",
+            (_state_to_json(state), "finished" if state.winner else "active", game_id),
+        )
+        if move_payload:
+            conn.execute(
+                "INSERT INTO async_moves (game_id, turn, player, move_json) VALUES (?,?,?,?)",
+                (game_id, int(move_payload.get("turn", state.turn)), move_payload.get("player", state.currentPlayer), json.dumps(move_payload)),
+            )
+        conn.commit()
+
+
+@app.post("/async/games")
+def create_async_game(payload: CreateGameRequest = CreateGameRequest()):
+    """Create a link-share async PvP match. No WebSocket required."""
+    game_id = str(uuid.uuid4())
+    red_token = str(uuid.uuid4())[:12]
+    blue_token = str(uuid.uuid4())[:12]
+    state = build_initial_state(bot_level=payload.botLevel)
+    state.vsBot = False
+    state.botPlayer = "BLUE"
+    state.botStyle = "Human Challenger"
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO async_games (game_id, red_token, blue_token, state_json) VALUES (?,?,?,?)",
+            (game_id, red_token, blue_token, _state_to_json(state)),
+        )
+        conn.commit()
+    return {
+        "game_id": game_id,
+        "redToken": red_token,
+        "blueToken": blue_token,
+        "redUrl": f"/?match={game_id}&token={red_token}",
+        "blueUrl": f"/?match={game_id}&token={blue_token}",
+        "state": state,
+        "role": "RED",
+    }
+
+
+@app.get("/async/games/{game_id}")
+def get_async_game(game_id: str, token: str):
+    row, state, player = _load_async_game(game_id, token)
+    return {"game_id": game_id, "role": player, "state": state, "status": row["status"]}
+
+
+@app.post("/async/games/{game_id}/move")
+def async_move(game_id: str, token: str, payload: MoveRequest):
+    row, state, player = _load_async_game(game_id, token)
+    if state.winner:
+        return state
+    if state.currentPlayer != player:
+        raise HTTPException(status_code=400, detail="It is not your turn")
+    try:
+        next_state = validate_and_apply_move(state, payload.row, payload.col, payload.letter, payload.path, advance_market_flag=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _save_async_state(game_id, next_state, {"type": "WORD", "turn": state.turn, "player": player})
+    return next_state
+
+
+@app.post("/async/games/{game_id}/seed-move")
+def async_seed_move(game_id: str, token: str, payload: SeedMoveRequest):
+    row, state, player = _load_async_game(game_id, token)
+    if state.winner:
+        return state
+    if state.currentPlayer != player:
+        raise HTTPException(status_code=400, detail="It is not your turn")
+    try:
+        next_state = apply_seed_move(state, payload.row, payload.col, payload.letter, advance_market_flag=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _save_async_state(game_id, next_state, {"type": "SEED", "turn": state.turn, "player": player})
+    return next_state
+
+
+@app.post("/async/games/{game_id}/pass")
+def async_pass(game_id: str, token: str):
+    row, state, player = _load_async_game(game_id, token)
+    if state.winner:
+        return state
+    if state.currentPlayer != player:
+        raise HTTPException(status_code=400, detail="It is not your turn")
+    next_state = pass_turn(state)
+    _save_async_state(game_id, next_state, {"type": "PASS", "turn": state.turn, "player": player})
+    return next_state
+
+
 # ── Premium Waitlist ③⑤ ──────────────────────────────────────────────────────
 
 # In-memory waitlist. In production: write to a database or send to Mailchimp/ConvertKit.
@@ -451,3 +593,14 @@ def waitlist_count():
         return {"count": count}
     except Exception:
         return {"count": 0}
+
+
+@app.get("/games/{game_id}/threat")
+def get_threat(game_id: str):
+    state = GAMES.get(game_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Game not found")
+    try:
+        return {"threats": get_threat_preview(state, limit=8)}
+    except Exception:
+        return {"threats": []}
