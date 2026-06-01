@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard,
-  getAlmost, getLetterPreview, getMarket, getSuggestions, getSynergyOptions, selectSynergy,
+  getAlmost, getLetterPreview, getMarket, getSuggestions, getSynergyOptions, selectSynergy, getThreat, createAsyncMatch, getAsyncMatch, submitAsyncMove, seedAsyncMove, passAsyncTurn,
   joinWaitlist, passTurn, previewMove, seedMove, submitDailyScore, submitMove,
   useFreeLetter,
 } from "../lib/api";
@@ -26,7 +26,6 @@ const TERRAIN_LABELS = {
   "CUT": "Cut",
   "FORTIFY CHAIN": "Fortify Chain",
   "LONG PATH": "Long Path",
-  "LONG PATH": "Long Path",
   "MEGA TERRITORY": "Mega Territory Swing",
   "CROSS WORD": "Cross Path",
   "FIRST CAPTURE": "First Capture",
@@ -43,7 +42,7 @@ function terrainComboLabel(label, move = null) {
   if (raw === "BRIDGE") return "Bridge — connected zones";
   if (raw === "CUT") return "Cut — split enemy territory";
   if (raw === "FORTIFY CHAIN") return "Fortify Chain — locked ground";
-  if (raw === "LONG PATH" || raw === "LONG PATH") return "Long Path bonus";
+  if (raw === "LONG PATH") return "Long Path bonus";
   return TERRAIN_LABELS[raw] || raw;
 }
 
@@ -170,12 +169,13 @@ function updateStreak(dateStr) {
 }
 
 // ── Cell ──────────────────────────────────────────────────────────────────────
-function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, attack, inPath, onClick }) {
+function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, attack, inPath, threat, threatMove, onClick }) {
   const cls = ["cell",
     cell.owner === "RED" ? "cr" : cell.owner === "BLUE" ? "cb" : "",
     cell.fortified ? "ft" : "", sel ? "sl" : "", placed ? "pl" : "",
     legal ? "lg" : "", disabled && !sel ? "dm" : "",
     attack ? "atk" : "",   // opponent cell that can be attacked
+    threat ? "threat" : "", threatMove ? "threatMove" : "",
     inPath ? "inpath" : "", // opponent cell currently in selected path (will be captured)
   ].filter(Boolean).join(" ");
   return (
@@ -185,6 +185,7 @@ function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled
       data-lk={lockedNow ? gen : null}>
       {cell.letter || ""}
       {attack && !inPath && <span className="atk-dot"/>}
+      {threat && !inPath && <span className="threat-dot" title="Capture threat"/>}
     </button>
   );
 }
@@ -366,7 +367,12 @@ export default function Home() {
   const [showSynergy, setShowSynergy] = useState(false);
   const [synergyOpts, setSynergyOpts] = useState([]);
   const [synergy,     setSynergy]     = useState("");
-  const [valuePrev,   setValuePrev]   = useState([]); // [{row,col,gain,word,tier,roles}]
+  const [valuePrev,   setValuePrev]   = useState([]); // Territory Preview candidates
+  const [threats,     setThreats]     = useState([]); // opponent capture threats
+  const [asyncMode,   setAsyncMode]   = useState(false);
+  const [asyncToken,  setAsyncToken]  = useState("");
+  const [asyncRole,   setAsyncRole]   = useState("");
+  const [inviteUrl,   setInviteUrl]   = useState("");
   const comboTimer = useRef(null);
   const [animGen,  setAnimGen]    = useState(0);
 
@@ -400,6 +406,22 @@ export default function Home() {
       if (prev) { setDailyResult(prev); setShareText(buildShare(info.dayNumber, info.dateStr, prev)); }
     }).catch(() => {});
     setStreak(getStreak().count);
+    // Link-share async PvP MVP: ?match=<id>&token=<token>
+    try {
+      const qs = new URLSearchParams(window.location.search);
+      const mid = qs.get("match");
+      const tok = qs.get("token");
+      if (mid && tok) {
+        setBootMsg("Loading async match…");
+        getAsyncMatch(mid, tok).then(d => {
+          setAsyncMode(true); setAsyncToken(tok); setAsyncRole(d.role || "");
+          setGameId(mid); setState(d.state); setDailyMode(false); setBootMsg("");
+          if (d.state?.marketLetters?.length > 0) setMarket({ active:d.state.marketLetters, preview:d.state.previewLetters||[], stats:[], freeLetterUsed:!!d.state.freeLetterUsed });
+          getSuggestions(mid).then(setSugg).catch(()=>setSugg([]));
+          getThreat(mid).then(setThreats).catch(()=>setThreats([]));
+        }).catch(e => setError(e.message || "Could not load async match"));
+      }
+    } catch {}
   }, []);
 
   // ── boot helpers ─────────────────────────────────────────────────────────
@@ -430,6 +452,8 @@ export default function Home() {
           try { const mk = await getMarket(d.game_id); setMarket(mk); } catch(_) {}
         }
         getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
+    getThreat(d.game_id).then(setThreats).catch(() => setThreats([]));
+        getThreat(d.game_id).then(setThreats).catch(() => setThreats([]));
         // Show synergy card selection
         getSynergyOptions(d.game_id).then(r => {
           setSynergyOpts(r.options||[]);
@@ -467,7 +491,13 @@ export default function Home() {
       }).catch(() => {});
     getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
   }
-  useEffect(() => { boot().catch(e => setError(String(e))); }, []);
+  useEffect(() => {
+    try {
+      const qs = new URLSearchParams(window.location.search);
+      if (qs.get("match") && qs.get("token")) return;
+    } catch {}
+    boot().catch(e => setError(String(e)));
+  }, []);
 
   // ── state tick ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -487,6 +517,7 @@ export default function Home() {
   // ── bot auto-move ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state || !gameId) return;
+    if (asyncMode) return;
     if (state.winner && state.winner !== "") return;  // stops on RED/BLUE/DRAW
     if (state.currentPlayer !== state.botPlayer) return;
     let cancelled = false;
@@ -584,7 +615,7 @@ export default function Home() {
   }, [placed]);
 
   // ── board helpers ────────────────────────────────────────────────────────
-  const human = () => state && !thinking && !state.winner && state.currentPlayer !== state.botPlayer;
+  const human = () => state && !thinking && !state.winner && (asyncMode ? state.currentPlayer === asyncRole : state.currentPlayer !== state.botPlayer);
   const isSel = (r,c) => path.some(p => p.row===r && p.col===c);
 
   // Opponent cells adjacent to any placeable empty cell = attackable
@@ -702,7 +733,13 @@ export default function Home() {
   }
 
   // ── move actions ─────────────────────────────────────────────────────────
-  const refresh = async (id=gameId) => { try { setSugg(await getSuggestions(id)); } catch { setSugg([]); } };
+  async function syncThreats(id=gameId) {
+    try { setThreats(await getThreat(id)); } catch { setThreats([]); }
+  }
+  const refresh = async (id=gameId) => {
+    try { setSugg(await getSuggestions(id)); } catch { setSugg([]); }
+    await syncThreats(id);
+  };
   async function submit() {
     if (!placed) { setError("Tap a green square first."); return; }
     if (!letter) {
@@ -711,7 +748,8 @@ export default function Home() {
     }
 
     try {
-      const next = await submitMove({game_id:gameId,row:placed.row,col:placed.col,letter,path});
+      const payload = {game_id:gameId,row:placed.row,col:placed.col,letter,path};
+      const next = asyncMode ? await submitAsyncMove(gameId, asyncToken, payload) : await submitMove(payload);
       setState(next);
       // Update market from state immediately
       if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
@@ -724,7 +762,8 @@ export default function Home() {
     if (!placed) { setError("Tap a green square first."); return; }
     if (!letter) { setError("Type one letter in the input box."); return; }
     try {
-      const next = await seedMove(gameId,{row:placed.row,col:placed.col,letter});
+      const payload = {row:placed.row,col:placed.col,letter};
+      const next = asyncMode ? await seedAsyncMove(gameId, asyncToken, payload) : await seedMove(gameId,payload);
       setState(next);
       if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
 
@@ -733,7 +772,7 @@ export default function Home() {
     } catch(e) { setError(e.message||"Seed failed"); }
   }
   async function pass() {
-    try { const next = await passTurn(gameId); setState(next); reset(); await refresh(); }
+    try { const next = asyncMode ? await passAsyncTurn(gameId, asyncToken) : await passTurn(gameId); setState(next); reset(); await refresh(); }
     catch(e) { setError(e.message||"Pass failed"); }
   }
 
@@ -768,6 +807,12 @@ export default function Home() {
     .slice(0,3);
   const bestMove = topMoves[0] || null;
   const moveLabel = terrainMoveLabel;
+  const threatCellSet = useMemo(() => {
+    const s = new Set();
+    (threats||[]).forEach(t => (t.cells||[]).forEach(c => s.add(asKey(c.row,c.col))));
+    return s;
+  }, [JSON.stringify(threats||[])]);
+  const threatMoveSet = useMemo(() => new Set((threats||[]).map(t => asKey(t.row,t.col))), [JSON.stringify(threats||[])]);
 
   if (!state) return (
     <main className="loading">
@@ -806,7 +851,7 @@ export default function Home() {
       <div className="hdr">
         <div className="hdr-l">
           <h1>WORD TERRITORY{dailyMode&&dailyInfo&&<span className="dpill">Daily #{dailyInfo.dayNumber}</span>}</h1>
-          <p className="sub">Opening: {state.openingName} · Bot: {state.botStyle || "Raider"} · {thinking?"Bot thinking…":state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
+          <p className="sub">Opening: {state.openingName} · {asyncMode ? `Async PvP · You are ${asyncRole}` : `Bot: ${state.botStyle || "Raider"}`} · {thinking?"Bot thinking…":asyncMode ? (state.currentPlayer===asyncRole?`Your turn (${asyncRole})`:`Waiting for ${state.currentPlayer}`) : state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
         </div>
         <div className="hdr-r">
           {!dailyMode&&(
@@ -837,6 +882,8 @@ export default function Home() {
             ?<button className="bprim" onClick={()=>boot(mode)}>← Free Play</button>
             :<button className="bprim" onClick={()=>boot(mode)}>New Game</button>
           }
+          <button className="bsm" onClick={async()=>{try{const d=await createAsyncMatch({botLevel:mode}); setAsyncMode(true); setAsyncToken(d.redToken); setAsyncRole('RED'); setGameId(d.game_id); setState(d.state); setDailyMode(false); setInviteUrl(`${window.location.origin}${d.blueUrl}`); setMarket({active:d.state.marketLetters||[], preview:d.state.previewLetters||[], stats:[], freeLetterUsed:!!d.state.freeLetterUsed}); await refresh(d.game_id);}catch(e){setError(e.message||'Could not create async match');}}}>Async PvP</button>
+          {asyncMode&&<button className="bsm" onClick={async()=>{try{const d=await getAsyncMatch(gameId, asyncToken); setState(d.state); await refresh(gameId);}catch(e){setError(e.message||'Could not refresh match');}}}>Refresh Match</button>}
         </div>
       </div>
 
@@ -879,6 +926,7 @@ export default function Home() {
 
       {/* ── banners ── */}
       {dailyMode&&<div className="dbanner">🗓️ Daily #{dailyInfo?.dayNumber} · {dailyInfo?.dateStr} · Strong Bot · {state.botStyle || "Raider"}{streak>1?` · 🔥 ${streak} day streak`:""}</div>}
+      {asyncMode&&inviteUrl&&<div className="dbanner async-banner">🔗 Async PvP invite: <button className="link-copy" onClick={async()=>{try{await navigator.clipboard.writeText(inviteUrl); setCopied(true); setTimeout(()=>setCopied(false),2000);}catch{}}}>{copied?'Copied!':'Copy BLUE link'}</button></div>}
       {thinking&&<div className="bnr thinking">Bot is thinking…</div>}
       {synergyFlash&&<div className="bnr synergy-flash">{synergyFlash}</div>}
           {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
@@ -903,10 +951,11 @@ export default function Home() {
                     changed={changedS.has(k)} captured={capturedS.has(k)} lockedNow={lockedS.has(k)}
                     disabled={isDim(cell.row,cell.col)} gen={animGen}
                     attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
+                    threat={threatCellSet.has(k)} threatMove={threatMoveSet.has(k)}
                     inPath={inPathOpponentSet.has(k)}
                     onClick={()=>clickCell(cell.row,cell.col)}/>
-                  {showVp && <div className={`vp-overlay vp-${vp.tier || 'basic'}`} title={vp.word ? `${vp.word} · Territory Swing +${vp.gain||0}` : 'Setup'}>
-                    <span className="vp-num">{(Number(vp.gain)||0) > 0 ? `+${vp.gain}` : 'SET'}</span>
+                  {showVp && <div className={`vp-overlay vp-${vp.tier || 'basic'}`} title={vp.word ? `${vp.word} · Territory Swing +${vp.gain||0}${vp.synergyPreview ? ' · '+vp.synergyPreview : ''}` : 'Setup'}>
+                    <span className="vp-num">{vp.tier==='strong' ? `+${vp.gain}T` : vp.tier==='frontline' ? `+${vp.gain}T` : (Number(vp.gain)||0) > 0 ? `+${vp.gain}T` : 'SET'}</span>
                     {vp.tier==='strong' && <span className="vp-star">★</span>}
                   </div>}
                 </div>;
@@ -1041,15 +1090,15 @@ export default function Home() {
                         {preview.isInDictionary?"✓ Valid":"Not in dictionary"}
                         {" · "}+{preview.wordScore}pts · Territory Swing +{preview.territoryGain}
                         {preview.lockGain>0&&` · Locked ${preview.lockGain}`}
-                        {preview.captureHappened&&<span className="pvcap"> ⚔ CAPTURE +{preview.captureCount||1}</span>}
+                        {preview.captureHappened&&<span className="pvcap"> ⚔ Captured {preview.captureCount||1}</span>}
                       </div>
                       {preview.comboLabels?.length>0&&<div className="chips">
                         {preview.comboLabels.map((x,xi)=>{
-                          if(x.startsWith('SYNERGY:')){
-                            const msg=x.replace('SYNERGY:','').trim();
-                            return <span key={xi} className="chip combo synergy-chip" title={msg}>✦ {msg}</span>;
+                          const label = terrainComboLabel(x, { captureCount: preview.captureCount || 0 });
+                          if(String(x).startsWith('SYNERGY:')){
+                            return <span key={xi} className="chip combo synergy-chip" title={label}>✦ {label}</span>;
                           }
-                          return <span key={xi} className="chip combo">{x}</span>;
+                          return <span key={xi} className="chip combo">{label}</span>;
                         })}
                       </div>}
                     </>
@@ -1182,6 +1231,8 @@ export default function Home() {
                 </div>
                 {bestMove && <div className="best-move-card"><strong>Best Territorial Swing:</strong> {moveLabel(bestMove)}</div>}
                 {topMoves.length>0&&<><h3>Top Territorial Swings</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
+                {state?.board && <div className="emoji-board-card"><div className="muted">Emoji Board</div><pre>{buildEmojiBoard(state.board)}</pre><button className="bcopy" onClick={async()=>{try{await navigator.clipboard.writeText(buildEmojiBoard(state.board));setCopied(true);setTimeout(()=>setCopied(false),2000);}catch{}}}>{copied?"✓ Copied":"Copy board"}</button></div>}
+                {state?.board && <div className="emoji-board-card"><div className="muted">Emoji Board</div><pre>{buildEmojiBoard(state.board)}</pre><button className="bcopy" onClick={async()=>{try{await navigator.clipboard.writeText(buildEmojiBoard(state.board));setCopied(true);setTimeout(()=>setCopied(false),2000);}catch{}}}>{copied?"✓ Copied":"Copy board"}</button></div>}
 
                 {/* Share card */}
                 {shareText&&(
@@ -1311,8 +1362,11 @@ export default function Home() {
       .cell.lg:hover{background:#d0f7d0}
       .cell.dm{opacity:.35;cursor:not-allowed}
       .cell[data-chg]{animation:aclaim 500ms ease forwards}
-      .cell[data-cap]{animation:acap 800ms ease forwards}
-      .cell[data-lk]{animation:alk 600ms ease forwards}
+      .cell[data-cap]{animation:acap 900ms ease forwards}
+      .cell[data-lk]{animation:alk 700ms ease forwards}
+      .cell.threat{box-shadow:inset 0 0 0 2px rgba(37,99,235,.55);background:rgba(37,99,235,.08)}
+      .cell.threatMove{outline:2px dashed rgba(37,99,235,.5);outline-offset:-4px}
+      .threat-dot{position:absolute;bottom:3px;left:3px;width:7px;height:7px;border-radius:50%;background:#2563eb;box-shadow:0 0 8px rgba(37,99,235,.8);pointer-events:none}
       /* ── Letter Market ─────────────────────────────────────────────────── */
       .lm-panel{background:#fff;border:1.5px solid #e0e0e0;border-radius:14px;padding:10px 14px;margin-bottom:10px}
       .lm-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
@@ -1347,9 +1401,10 @@ export default function Home() {
       .vp-overlay{position:absolute;bottom:5px;right:5px;transform:none;
                   font-size:10px;font-weight:900;border-radius:5px;padding:1px 5px;
                   pointer-events:none;white-space:nowrap;z-index:10;box-shadow:0 1px 4px rgba(0,0,0,.16)}
-      .vp-basic{background:rgba(74,222,128,.85);color:#14532d}
-      .vp-good{background:rgba(250,204,21,.9);color:#713f12}
-      .vp-strong{background:rgba(139,92,246,.9);color:#fff}
+      .vp-basic,.vp-safe{background:rgba(74,222,128,.85);color:#14532d}
+      .vp-good,.vp-frontline{background:rgba(250,204,21,.9);color:#713f12}
+      .vp-path{background:rgba(59,130,246,.88);color:#fff}
+      .vp-strong{background:rgba(139,92,246,.92);color:#fff}
       .vp-star{margin-left:2px;font-size:9px}
 
       /* Synergy flash */
@@ -1372,6 +1427,9 @@ export default function Home() {
       .winner-score{font-size:16px;font-weight:400;color:#aaa;margin-left:8px}
       .best-move-inline{font-size:13px;color:#f8fafc;margin-top:4px;letter-spacing:.2px}
       .best-move-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin:12px 0;font-size:13px;color:#111}
+      .emoji-board-card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin:12px 0;text-align:left}
+      .emoji-board-card pre{font-size:18px;line-height:1.25;white-space:pre;margin:8px 0;font-family:monospace}
+      .async-banner{display:flex;gap:8px;align-items:center;justify-content:center}.link-copy{border:1px solid rgba(255,255,255,.4);background:#fff;color:#111;border-radius:8px;padding:4px 10px;font-weight:800;cursor:pointer}
 
       /* Synergy Card Modal */
       .syn-modal{max-width:520px;text-align:center}
@@ -1418,8 +1476,8 @@ export default function Home() {
       .pvcap{color:#e65c00;font-weight:800;font-size:13px}
       @keyframes ainpath{0%{box-shadow:inset 0 0 0 3px #e65c00}100%{box-shadow:inset 0 0 0 3px #ff8c00}}
       @keyframes aclaim{0%{transform:scale(1.12)}100%{transform:scale(1)}}
-      @keyframes acap{0%,30%{background:#ffe040}100%{}}
-      @keyframes alk{0%{box-shadow:0 0 0 6px #111 inset}50%{box-shadow:0 0 0 2px #111 inset}100%{}}
+      @keyframes acap{0%{transform:scale(1);filter:saturate(1)}35%{transform:scale(1.15);background:#ffe040;filter:saturate(1.7)}70%{transform:scale(.96)}100%{transform:scale(1)}}
+      @keyframes alk{0%{box-shadow:0 0 0 7px #111 inset,0 0 0 0 rgba(17,17,17,.7)}50%{box-shadow:0 0 0 2px #111 inset,0 0 0 8px rgba(17,17,17,.12)}100%{}}
 
       /* move panel */
       .mpanel{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px}
