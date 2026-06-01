@@ -178,7 +178,7 @@ def find_almost_words(state: GameState, limit: int = 5) -> list[dict]:
                     if plen >= 3 and (er, ec) in set(path):
                         word = letters_from_path(state, path, (er, ec), needed_letter)
                         if (word and word in words and word not in excluded
-                                and word not in seen_words):
+                                and word not in seen_words and _is_ui_word(word)):
                             seen_words.add(word)
                             results.append({
                                 "word": word,
@@ -203,12 +203,47 @@ def find_almost_words(state: GameState, limit: int = 5) -> list[dict]:
     return results[:limit]
 
 
-# Words to exclude from Suggested panel (obscure/abbreviations)
+# Words to exclude from player-facing hints and bot preference.
+# Important: these are NOT removed from the dictionary/validator.
+# A player can still manually play them, but Suggested / Almost / Bot / Preview
+# avoid surfacing abbreviations, proper-looking forms, archaic/obscure entries,
+# or words that make the demo feel like a dictionary exploit.
 _SUGGESTED_EXCLUDE = frozenset({
-    'HRS','HES','MAS','EST','SIM','IDES','ODES','PHI','PSI','ETA',
-    'TAO','OCA','EFT','OFT','ERE','EKE','GOB','POI','KOI','ZIT',
-    'JUT','OOH','AAH','HMM','DOIT','NARC','OTIC','ALEC',
+    # abbreviations / units / acronyms
+    'MPH','ETC','LIB','TBSP','TSP','HRS','HR','MIN','SEC','USD','GBP','EUR',
+    'DNA','RNA','CPU','GPU','USB','URL','HTML','HTTP','CEO','CFO','MBA','PHD',
+    # Greek letters / particles / crosswordese
+    'PHI','PSI','ETA','TAO','OCA','EFT','OFT','ERE','EKE','KOI','POI',
+    # interjections / odd short entries
+    'OOH','AAH','HMM','UGH','PST','SHH',
+    # obscure / proper-looking / weak demo words observed in tests
+    'HES','MAS','EST','SIM','IDES','ODES','JUT','ZIT','GOB','DOIT','NARC','OTIC','ALEC',
+    'VAR','FARO','TARO','GEN','TOSH','LENO','BIFF','GLIB',
+    # very technical / weak bot choices
+    'ION','IONA','ERG','OHM','EMU','OVA','AXE',
 })
+
+
+def _is_ui_word(word: str) -> bool:
+    """Return True for words suitable for hints, bot preference, and pitch-visible UI.
+
+    The core validator can still accept the full dictionary. This only controls
+    what the game recommends or lets the bot prioritize.
+    """
+    if not word:
+        return False
+    w = word.upper().strip()
+    if w in _SUGGESTED_EXCLUDE:
+        return False
+    if len(w) < 3 or len(w) > 6:
+        return False
+    # Hide all-uppercase abbreviation-like words with no clear vowel flow.
+    if len(w) == 3 and sum(1 for ch in w if ch in 'AEIOU') == 0:
+        return False
+    # Avoid pluralized abbreviation/dictionary-noise patterns in hints.
+    if len(w) <= 4 and w.endswith('S') and w[:-1] in _SUGGESTED_EXCLUDE:
+        return False
+    return True
 
 
 # ── Letter Market ─────────────────────────────────────────────────────────────
@@ -331,6 +366,35 @@ def apply_synergy_bonus(state: GameState, combos: list[str], player: str,
     return bonus
 
 
+
+
+def synergy_activation_text(state: GameState, combos: list[str], player: str,
+                            word: str, letter: str, bonus: int) -> str:
+    """Human-readable synergy activation message for history/flash UI."""
+    if bonus <= 0 or not state.selectedSynergy:
+        return ""
+    card = state.selectedSynergy
+    name = SYNERGY_CARDS.get(card, {}).get('name', 'Synergy')
+    if card == 'BRIDGE_MASTER':
+        return f"{name} activated! +{bonus}T"
+    if card == 'FORTIFIER':
+        if not state.synergyState.get('firstLockDone'):
+            return f"{name} first lock! +{bonus}T"
+        return f"{name} activated! +{bonus}T"
+    if card == 'CUT_HUNTER':
+        return f"{name} capture bonus! +{bonus}T"
+    if card == 'LONG_WORD':
+        return f"{name} activated! +{bonus}T"
+    if card == 'VOWEL_ENGINE':
+        return f"{name} activated! +{bonus}T"
+    if card == 'COMEBACK_SPARK':
+        return f"{name} activated! +{bonus}T"
+    if card == 'SEED_TACTICIAN':
+        return f"{name} activated! +{bonus}T"
+    if card == 'POWER_SEEKER':
+        return f"{name} activated! +{bonus}T"
+    return f"{name} activated! +{bonus}T"
+
 def update_synergy_state(state: GameState, combos: list[str],
                          is_seed: bool = False) -> dict:
     """Update synergy state machine after a move."""
@@ -423,7 +487,7 @@ def _fast_bot_moves_for_letter(state: GameState, letter: str,
             path, vis = stack.pop()
             if len(path) >= 3 and (er,ec) in set(path):
                 w = letters_from_path(state, path, (er,ec), letter)
-                if w and w in words and w not in excluded:
+                if w and w in words and w not in excluded and _is_ui_word(w):
                     # Quick territory estimate: path length
                     gain = len(path)
                     results.append({"row": er, "col": ec, "letter": letter,
@@ -680,10 +744,10 @@ def get_letter_preview_moves(state: GameState, letter: str, limit: int = 12) -> 
                 + (4 if "BRIDGE" in combos else 0)
                 + (4 if "CUT" in combos else 0)
                 + (3 if "POWER WORD" in combos else 0)
-                + (3 if "SYNERGY" in combos else 0)
+                + (3 if any(str(c).startswith("SYNERGY") for c in combos) else 0)
             )
             kind = "SAFE"
-            if last.captureCount > 0 or "BRIDGE" in combos or "CUT" in combos or "SYNERGY" in combos:
+            if last.captureCount > 0 or "BRIDGE" in combos or "CUT" in combos or any(str(c).startswith("SYNERGY") for c in combos):
                 kind = "POWER"
             elif len(last.word) >= 5 or "POWER WORD" in combos:
                 kind = "LONG"
@@ -732,7 +796,7 @@ def find_candidate_words(state: GameState, limit: int = 15) -> list[str]:
     result = []
     for m in moves:
         w = m["word"]
-        if w in seen or w in _SUGGESTED_EXCLUDE:
+        if w in seen or not _is_ui_word(w):
             continue
         seen.add(w)
         result.append(w)
@@ -1063,13 +1127,12 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     if "COMEBACK" in combos:      bonus += 2
 
     # Synergy Card bonus (Balatro-like build direction)
+    base_bonus = bonus
     synergy_bonus = apply_synergy_bonus(temp, combos, player, word, letter)
-    if synergy_bonus > 0:
-        bonus += synergy_bonus
-        if "SYNERGY" not in combos:
-            combos.append("SYNERGY")
+    bonus_uncapped = base_bonus + synergy_bonus
 
     # ── Anti-snowball: cap bonus when player is already winning by 10+ cells ──
+    bonus = bonus_uncapped
     if bonus > 0 and temp.scores:
         my_t   = temp.scores.redTerritory if player == "RED" else temp.scores.blueTerritory
         opp_t  = temp.scores.blueTerritory if player == "RED" else temp.scores.redTerritory
@@ -1078,6 +1141,14 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
             bonus = min(bonus, 1)   # hard cap at 1 when crushing
         elif lead >= 10:
             bonus = min(bonus, 2)   # soft cap at 2 when comfortably ahead
+
+    # Show the actual synergy contribution after any anti-snowball cap.
+    actual_base_bonus = min(base_bonus, bonus)
+    actual_synergy_bonus = max(0, bonus - actual_base_bonus)
+    if actual_synergy_bonus > 0:
+        syn_text = synergy_activation_text(temp, combos, player, word, letter, actual_synergy_bonus)
+        if syn_text:
+            combos.append(f"SYNERGY:{syn_text}")
     if bonus > 0:
         # Convert nearest unfortified non-player cells to player (bonus territory)
         import random as _r
@@ -1409,7 +1480,7 @@ def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: 
                 if plen >= 3 and (er, ec) in set(path):
                     for placed_letter in LETTERS:
                         word = letters_from_path(state, path, (er, ec), placed_letter)
-                        if word and word in words and word not in excluded:
+                        if word and word in words and word not in excluded and _is_ui_word(word):
                             results.append({
                                 "row": er, "col": ec,
                                 "letter": placed_letter,
