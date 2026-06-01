@@ -47,6 +47,10 @@ from engine import (
     find_candidate_words,
     find_almost_words,
     generate_letter_market,
+    SYNERGY_CARDS,
+    pick_synergy_options,
+    apply_synergy_bonus,
+    update_synergy_state,
     advance_market,
     get_market_stats,
     pass_turn,
@@ -298,6 +302,40 @@ def get_daily_leaderboard():
         totalPlayers=total,
         entries=entries,
     )
+
+
+# ── Synergy Card endpoints ───────────────────────────────────────────────────
+
+@app.get("/games/{game_id}/synergy-options")
+def get_synergy_options(game_id: str):
+    """Return the 3 synergy card options for this game."""
+    state = GAMES.get(game_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Game not found")
+    options = []
+    for key in state.synergyOptions:
+        card = SYNERGY_CARDS.get(key, {})
+        options.append({"key": key, **card})
+    return {
+        "options": options,
+        "selected": state.selectedSynergy,
+    }
+
+
+@app.post("/games/{game_id}/select-synergy")
+def select_synergy(game_id: str, req: dict):
+    """Player selects one synergy card."""
+    state = GAMES.get(game_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if state.turn > 1:
+        raise HTTPException(status_code=400, detail="Synergy must be selected before first move")
+    card_key = req.get("card", "")
+    if card_key not in state.synergyOptions:
+        raise HTTPException(status_code=400, detail=f"Card {card_key} not in options")
+    state.selectedSynergy = card_key
+    state.synergyState = {}
+    return {"selected": card_key, "card": SYNERGY_CARDS[card_key]}
 
 
 # ── Letter Market endpoints ──────────────────────────────────────────────────
