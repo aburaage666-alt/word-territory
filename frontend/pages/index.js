@@ -52,10 +52,31 @@ function terrainMoveLabel(m) {
   return `${m.word} — Territory Swing +${m.territoryGained}${labels.length ? " · " + labels.join(" · ") : ""}`;
 }
 
+function moveInsightLines(m) {
+  if (!m) return [];
+  const lines = [];
+  if (m.moveType === "SEED") return [`${m.player} seeded ${m.placedLetter || "a letter"} to build future territory.`];
+  if (m.word) lines.push(`${m.player} played ${m.word}.`);
+  if ((m.territoryGained || 0) > 0) lines.push(`Territory Swing +${m.territoryGained}.`);
+  if ((m.captureCount || 0) > 0) lines.push(`Captured ${m.captureCount} cell${m.captureCount === 1 ? "" : "s"}.`);
+  if ((m.fortifiedCellsGained || 0) > 0) lines.push(`Locked ${m.fortifiedCellsGained} cell${m.fortifiedCellsGained === 1 ? "" : "s"}.`);
+  const labels = (m.comboLabels || []).map(x => terrainComboLabel(x, m));
+  const terrainLabels = labels.filter(Boolean);
+  if (terrainLabels.length) lines.push(terrainLabels.join(" · "));
+  return lines;
+}
+
+function compactMoveTitle(m) {
+  if (!m) return "";
+  if (m.moveType === "SEED") return `${m.player} seeded ${m.placedLetter || ""}`.trim();
+  return `${m.player} reshaped the map with ${m.word}`;
+}
+
 
 const LS_DAILY  = "wt_daily_";
 const LS_PREM   = "wt_premium";  // ③⑤ premium flag
 const LS_STREAK = "wt_streak";
+const LS_INTRO  = "wt_intro_seen";
 
 const loadResult  = ds => { try { return JSON.parse(localStorage.getItem(LS_DAILY + ds) || "null"); } catch { return null; } };
 const saveResult  = (ds, r) => { try { localStorage.setItem(LS_DAILY + ds, JSON.stringify(r)); } catch {} };
@@ -169,7 +190,7 @@ function updateStreak(dateStr) {
 }
 
 // ── Cell ──────────────────────────────────────────────────────────────────────
-function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, attack, inPath, threat, threatMove, onClick }) {
+function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, attack, inPath, threat, threatMove, captureOrder, lockOrder, onClick }) {
   const cls = ["cell",
     cell.owner === "RED" ? "cr" : cell.owner === "BLUE" ? "cb" : "",
     cell.fortified ? "ft" : "", sel ? "sl" : "", placed ? "pl" : "",
@@ -178,12 +199,17 @@ function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled
     threat ? "threat" : "", threatMove ? "threatMove" : "",
     inPath ? "inpath" : "", // opponent cell currently in selected path (will be captured)
   ].filter(Boolean).join(" ");
+  const animStyle = {
+    "--cap-delay": captureOrder != null ? `${captureOrder * 80}ms` : "0ms",
+    "--lock-delay": lockOrder != null ? `${lockOrder * 70}ms` : "0ms",
+  };
   return (
-    <button className={cls} onClick={onClick} disabled={disabled}
+    <button className={cls} onClick={onClick} style={animStyle} disabled={disabled}
       data-chg={changed ? gen : null}
       data-cap={captured ? gen : null}
       data-lk={lockedNow ? gen : null}>
       {cell.letter || ""}
+      {cell.fortified && <span className="lock-shield" title="Fortified ground">🛡</span>}
       {attack && !inPath && <span className="atk-dot"/>}
       {threat && !inPath && <span className="threat-dot" title="Capture threat"/>}
     </button>
@@ -376,6 +402,7 @@ export default function Home() {
   const [spectatorMode, setSpectatorMode] = useState(false);
   const [spectatorSteps, setSpectatorSteps] = useState(0);
   const [spectatorNote, setSpectatorNote] = useState("");
+  const [showIntro, setShowIntro] = useState(false);
   const comboTimer = useRef(null);
   const [animGen,  setAnimGen]    = useState(0);
 
@@ -423,6 +450,8 @@ export default function Home() {
           getSuggestions(mid).then(setSugg).catch(()=>setSugg([]));
           getThreat(mid).then(setThreats).catch(()=>setThreats([]));
         }).catch(e => setError(e.message || "Could not load async match"));
+      } else if (typeof window !== "undefined" && localStorage.getItem(LS_INTRO) !== "1") {
+        setShowIntro(true);
       }
     } catch {}
   }, []);
@@ -544,6 +573,13 @@ export default function Home() {
       setBootMsg("");
       setError(e.message || "Could not start spectator demo");
     }
+  }
+
+
+  function dismissIntro(watch = false) {
+    try { localStorage.setItem(LS_INTRO, "1"); } catch {}
+    setShowIntro(false);
+    if (watch) startSpectatorDemo();
   }
 
   useEffect(() => {
@@ -892,7 +928,9 @@ export default function Home() {
   // ── derived ──────────────────────────────────────────────────────────────
   const changedS  = new Set((state?.lastChangedCells||[]).map(c=>asKey(c.row,c.col)));
   const capturedS = new Set((state?.lastCapturedCells||[]).map(c=>asKey(c.row,c.col)));
+  const capturedOrderMap = new Map((state?.lastCapturedCells||[]).map((c,i)=>[asKey(c.row,c.col), i]));
   const lockedS   = new Set((state?.lastFortifiedCells  ||[]).map(c=>asKey(c.row,c.col)));
+  const lockedOrderMap = new Map((state?.lastFortifiedCells||[]).map((c,i)=>[asKey(c.row,c.col), i]));
   const redT = tScore(state,"RED"), blueT = tScore(state,"BLUE");
   const pct  = Math.round((redT / Math.max(redT+blueT,1)) * 100);
   const incPlaced = placed && path.some(p=>p.row===placed.row&&p.col===placed.col);
@@ -909,6 +947,14 @@ export default function Home() {
     return s;
   }, [JSON.stringify(threats||[])]);
   const threatMoveSet = useMemo(() => new Set((threats||[]).map(t => asKey(t.row,t.col))), [JSON.stringify(threats||[])]);
+  const lastMove = (state?.moveHistory || [])[Math.max((state?.moveHistory?.length || 0) - 1, 0)] || null;
+  const lastMoveInsights = moveInsightLines(lastMove);
+  const lastMoveIsSwing = !!lastMove && (
+    (lastMove.captureCount || 0) > 0 ||
+    (lastMove.fortifiedCellsGained || 0) > 0 ||
+    (lastMove.territoryGained || 0) >= 5 ||
+    (lastMove.comboLabels || []).some(x => String(x).includes("BRIDGE") || String(x).includes("SYNERGY") || String(x).includes("CAPTURE"))
+  );
 
   if (!state) return (
     <main className="loading">
@@ -929,7 +975,7 @@ export default function Home() {
     <Head>
       {/* ③ SEO + social meta tags */}
       <title>Word Territory{dailyMode&&dailyInfo?` · Daily #${dailyInfo.dayNumber}`:""}</title>
-      <meta name="description" content="Word Territory is a spatial strategy game where you use words to capture territory, lock cells, and outmaneuver your opponent. Play the Daily Challenge!" />
+      <meta name="description" content="Word Territory is a word-powered territory strategy game where words become the map. Play the Daily Challenge!" />
       <meta property="og:title" content="Word Territory" />
       <meta property="og:description" content="A spatial strategy word game. Daily Challenge · Combo moves · Territory control." />
       <meta property="og:url" content="https://wordterritory.com" />
@@ -943,11 +989,30 @@ export default function Home() {
     </Head>
 
     <main className="page">
+      {showIntro && (
+        <div className="intro-bg">
+          <div className="intro-card">
+            <div className="intro-kicker">30-second demo</div>
+            <h2>Words become territory.</h2>
+            <p>Watch letters claim ground, trigger captures, lock cells, and reshape the map.</p>
+            <div className="intro-steps">
+              <span>1. Pick a letter</span>
+              <span>2. Preview territory</span>
+              <span>3. Capture the map</span>
+            </div>
+            <div className="intro-btns">
+              <button className="bprim" onClick={()=>dismissIntro(true)}>▶ Watch Demo</button>
+              <button className="bsm" onClick={()=>dismissIntro(false)}>Start Playing</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* ── header ── */}
       <div className="hdr">
         <div className="hdr-l">
           <h1>WORD TERRITORY{dailyMode&&dailyInfo&&<span className="dpill">Daily #{dailyInfo.dayNumber}</span>}</h1>
           <p className="sub">Opening: {state.openingName} · {spectatorMode ? `Spectator Mode · ${state.botStyle || "Raider"} duel` : asyncMode ? `Async PvP · You are ${asyncRole}` : `Bot: ${state.botStyle || "Raider"}`} · {spectatorMode ? "Bot vs Bot" : thinking?"Bot thinking…":asyncMode ? (state.currentPlayer===asyncRole?`Your turn (${asyncRole})`:`Waiting for ${state.currentPlayer}`) : state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
+          <p className="tagline">Words become territory. Each move reshapes the map.</p>
         </div>
         <div className="hdr-r">
           {!dailyMode&&(
@@ -1027,16 +1092,26 @@ export default function Home() {
       {asyncMode&&inviteUrl&&<div className="dbanner async-banner">🔗 Async PvP invite: <button className="link-copy" onClick={async()=>{try{await navigator.clipboard.writeText(inviteUrl); setCopied(true); setTimeout(()=>setCopied(false),2000);}catch{}}}>{copied?'Copied!':'Copy BLUE link'}</button></div>}
       {spectatorMode&&<div className="dbanner demo-banner">🎬 Spectator Mode · Bot vs Bot · {spectatorNote || "Words become territory. Watch the map reshape itself."}</div>}
       {thinking&&<div className="bnr thinking">{spectatorMode?"Spectator bots are moving…":"Bot is thinking…"}</div>}
+      {spectatorMode&&lastMoveIsSwing&&<div className="bnr watch-swing">👀 Watch this swing — {lastMove ? terrainMoveLabel(lastMove) : "the map is changing"}</div>}
       {synergyFlash&&<div className="bnr synergy-flash">{synergyFlash}</div>}
           {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
       {error&&<div className="bnr err">{error}<button className="bx" onClick={()=>setError("")}>✕</button></div>}
+      {lastMove && lastMove.moveType !== "PASS" && (
+        <div className={`what-card ${lastMoveIsSwing ? "what-swing" : ""}`}>
+          <div className="what-kicker">What happened?</div>
+          <strong>{compactMoveTitle(lastMove)}</strong>
+          <div className="what-lines">
+            {lastMoveInsights.slice(1,5).map((line,i)=><span key={i}>{line}</span>)}
+          </div>
+        </div>
+      )}
 
       {/* ── layout ── */}
       <div className="layout">
         <div className="bcol">
           {/* board */}
           <div className="bwrap">
-            <div className="board-wrap"><div className="board">
+            <div className="board-wrap"><div className={`board ${lastMoveIsSwing ? "board-swing" : ""}`}>
               {state.board.map(row=>row.map(cell=>{
                 const k=asKey(cell.row,cell.col);
                 const vp = Array.isArray(valuePrev)
@@ -1048,6 +1123,7 @@ export default function Home() {
                     sel={isSel(cell.row,cell.col)} placed={placed?.row===cell.row&&placed?.col===cell.col}
                     legal={!placed&&isLegal(cell.row,cell.col)}
                     changed={changedS.has(k)} captured={capturedS.has(k)} lockedNow={lockedS.has(k)}
+                    captureOrder={capturedOrderMap.get(k)} lockOrder={lockedOrderMap.get(k)}
                     disabled={isDim(cell.row,cell.col)} gen={animGen}
                     attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
                     threat={threatCellSet.has(k)} threatMove={threatMoveSet.has(k)}
@@ -1064,16 +1140,29 @@ export default function Home() {
 
           {/* ── Winner Banner ── */}
           {state.winner && (
-            <div className="winner-banner">
-              <div className="battle-title">Battle Report</div>
-              {state.winner === "DRAW" ? "🤝 Draw" :
-               state.winner === "RED"  ? "🔴 RED wins!" :
-                                         "🔵 BLUE wins!"}
-              <span className="winner-score">
-                {state.winner !== "DRAW" && ` · ${Math.max(redT,blueT)}–${Math.min(redT,blueT)}`}
-              </span>
-              {bestMove && <div className="best-move-inline">Best Territorial Swing: <strong>{moveLabel(bestMove)}</strong></div>}
-            </div>
+            <>
+              <div className="winner-banner">
+                <div className="battle-title">Battle Report</div>
+                {state.winner === "DRAW" ? "🤝 Draw" :
+                 state.winner === "RED"  ? "🔴 RED wins!" :
+                                           "🔵 BLUE wins!"}
+                <span className="winner-score">
+                  {state.winner !== "DRAW" && ` · ${Math.max(redT,blueT)}–${Math.min(redT,blueT)}`}
+                </span>
+                {bestMove && <div className="best-move-inline">Best Territorial Swing: <strong>{moveLabel(bestMove)}</strong></div>}
+              </div>
+              <div className="battle-report-card">
+                <div className="report-head">
+                  <div><span className="report-kicker">Battle Report Card</span><strong>{state.openingName}</strong></div>
+                  <div className="report-score"><span>🔴 {redT}</span><span>🔵 {blueT}</span></div>
+                </div>
+                {bestMove && <div className="report-best"><span>Best Territorial Swing</span><strong>{moveLabel(bestMove)}</strong></div>}
+                <div className="report-stats">
+                  <span>Largest capture: {Math.max(0, ...((state.moveHistory||[]).map(m=>m.captureCount||0)))} cells</span>
+                  <span>Top swings: {topMoves.length}</span>
+                </div>
+              </div>
+            </>
           )}
 
           {/* ── Letter Market ── */}
@@ -1402,6 +1491,7 @@ export default function Home() {
       .hdr{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px}
       .hdr-l h1{font-size:22px;letter-spacing:2px;font-weight:900}
       .sub{font-size:12px;color:#666;margin-top:2px}
+      .tagline{font-size:12px;color:#111;font-weight:800;margin-top:4px;letter-spacing:.2px}
       .dpill{display:inline-block;background:#111;color:#fff;font-size:11px;border-radius:999px;padding:2px 9px;margin-left:8px;font-weight:700;vertical-align:middle}
       .hdr-r{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
       .mode-box{background:#fff;border:1px solid #ddd;border-radius:10px;padding:6px 10px;display:flex;flex-direction:column;gap:2px}
@@ -1422,6 +1512,21 @@ export default function Home() {
       .bprim{padding:9px 16px;border-radius:10px;border:none;background:#111;color:#fff;cursor:pointer;font-size:14px;font-weight:700;white-space:nowrap}
       .bprim:hover{background:#333}
 
+      /* intro / first impression */
+      .intro-bg{position:fixed;inset:0;background:rgba(15,23,42,.62);display:flex;align-items:center;justify-content:center;z-index:90;padding:18px}
+      .intro-card{background:#fff;border-radius:22px;padding:26px;max-width:560px;width:100%;box-shadow:0 24px 70px rgba(0,0,0,.32);text-align:center;border:1px solid rgba(255,255,255,.7)}
+      .intro-kicker{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#6d28d9;font-weight:900;margin-bottom:8px}
+      .intro-card h2{font-size:28px;margin-bottom:8px;letter-spacing:.3px}
+      .intro-card p{font-size:15px;color:#475569;line-height:1.6;margin:0 auto 14px;max-width:440px}
+      .intro-steps{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin:12px 0 18px}
+      .intro-steps span{background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;color:#334155}
+      .intro-btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+      .what-card{background:#fff;border:1px solid #e2e8f0;border-left:5px solid #111;border-radius:12px;padding:11px 14px;margin-bottom:10px;box-shadow:0 2px 10px rgba(15,23,42,.04)}
+      .what-card.what-swing{border-left-color:#7c3aed;background:linear-gradient(90deg,#faf5ff,#fff)}
+      .what-kicker{font-size:10px;text-transform:uppercase;letter-spacing:1.4px;color:#64748b;font-weight:900;margin-bottom:3px}
+      .what-lines{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+      .what-lines span{background:#f8fafc;border:1px solid #e2e8f0;border-radius:999px;padding:3px 8px;font-size:12px;color:#334155;font-weight:700}
+
       /* score bar */
       .sbar{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:12px 16px;margin-bottom:10px}
       .srow{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
@@ -1440,6 +1545,7 @@ export default function Home() {
       .bnr{padding:10px 14px;border-radius:10px;margin-bottom:10px;font-size:14px}
       .thinking{background:#eef3ff;color:#1a47a0}
       .demo-banner{background:linear-gradient(90deg,#111827,#5b21b6);color:#fff}
+      .watch-swing{background:linear-gradient(90deg,#581c87,#7c3aed,#9333ea);color:#fff;font-weight:900;text-align:center;box-shadow:0 0 0 2px rgba(167,139,250,.15)}
       .combo{background:#fff9c4;font-weight:800;text-align:center;font-size:16px;border:2px solid #f5d000}
       .err{background:#ffeaea;color:#8b1a1a;display:flex;justify-content:space-between;align-items:center}
       .bx{background:none;border:none;cursor:pointer;font-size:16px;color:#8b1a1a}
@@ -1452,19 +1558,21 @@ export default function Home() {
       .bwrap{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px;overflow-x:auto}
       .board-wrap{width:100%;overflow-x:auto;display:flex;justify-content:center;-webkit-overflow-scrolling:touch}
       .board{display:grid;grid-template-columns:repeat(7,58px);gap:5px;justify-content:center;min-width:max-content}
+      .board.board-swing{animation:boardpulse 900ms ease both}
       .cell-slot{position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center}
       .cell{position:relative;width:44px;height:44px;border:1.5px solid #c8c8c8;border-radius:9px;background:#fafafa;font-size:17px;font-weight:800;cursor:pointer;transition:background .12s}
       .cell.cr{background:rgba(192,57,43,.15);border-color:rgba(192,57,43,.3)}
       .cell.cb{background:rgba(34,113,179,.15);border-color:rgba(34,113,179,.3)}
-      .cell.ft{border-width:3px;border-color:#111}
+      .cell.ft{border-width:3px;border-color:#111;box-shadow:inset 0 0 0 2px rgba(17,17,17,.18)}
       .cell.sl{outline:3px solid #f0a500;outline-offset:-2px}
       .cell.pl{box-shadow:inset 0 0 0 3px #111}
       .cell.lg{background:#e8fce8;border-color:#5cb85c}
       .cell.lg:hover{background:#d0f7d0}
       .cell.dm{opacity:.35;cursor:not-allowed}
       .cell[data-chg]{animation:aclaim 500ms ease forwards}
-      .cell[data-cap]{animation:acap 900ms ease forwards}
-      .cell[data-lk]{animation:alk 700ms ease forwards}
+      .cell[data-cap]{animation:acap 900ms ease forwards;animation-delay:var(--cap-delay,0ms);animation-fill-mode:both}
+      .cell[data-lk]{animation:alk 850ms ease forwards;animation-delay:var(--lock-delay,0ms);animation-fill-mode:both}
+      .lock-shield{position:absolute;top:-6px;left:-6px;font-size:13px;line-height:1;background:#fff;border:1px solid #111;border-radius:999px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.18);pointer-events:none}
       .cell.threat{box-shadow:inset 0 0 0 2px rgba(37,99,235,.55);background:rgba(37,99,235,.08)}
       .cell.threatMove{outline:2px dashed rgba(37,99,235,.5);outline-offset:-4px}
       .threat-dot{position:absolute;bottom:3px;left:3px;width:7px;height:7px;border-radius:50%;background:#2563eb;box-shadow:0 0 8px rgba(37,99,235,.8);pointer-events:none}
@@ -1529,6 +1637,16 @@ export default function Home() {
       .winner-score{font-size:16px;font-weight:400;color:#aaa;margin-left:8px}
       .best-move-inline{font-size:13px;color:#f8fafc;margin-top:4px;letter-spacing:.2px}
       .best-move-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin:12px 0;font-size:13px;color:#111}
+      .battle-report-card{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:14px;margin-bottom:10px;box-shadow:0 6px 24px rgba(15,23,42,.06)}
+      .report-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}
+      .report-kicker{display:block;font-size:10px;text-transform:uppercase;letter-spacing:1.7px;color:#64748b;font-weight:900;margin-bottom:3px}
+      .report-score{display:flex;gap:6px;font-weight:900;white-space:nowrap}
+      .report-score span{background:#f8fafc;border:1px solid #e2e8f0;border-radius:999px;padding:4px 8px;font-size:12px}
+      .report-best{background:linear-gradient(90deg,#111827,#312e81);color:#fff;border-radius:12px;padding:10px 12px;margin:8px 0}
+      .report-best span{display:block;font-size:10px;text-transform:uppercase;letter-spacing:1.4px;color:#c7d2fe;font-weight:900;margin-bottom:3px}
+      .report-best strong{font-size:13px;line-height:1.45}
+      .report-stats{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+      .report-stats span{background:#f1f5f9;color:#334155;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800}
       .emoji-board-card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin:12px 0;text-align:left}
       .emoji-board-card pre{font-size:18px;line-height:1.25;white-space:pre;margin:8px 0;font-family:monospace}
       .async-banner{display:flex;gap:8px;align-items:center;justify-content:center}.link-copy{border:1px solid rgba(255,255,255,.4);background:#fff;color:#111;border-radius:8px;padding:4px 10px;font-weight:800;cursor:pointer}
@@ -1578,8 +1696,9 @@ export default function Home() {
       .pvcap{color:#e65c00;font-weight:800;font-size:13px}
       @keyframes ainpath{0%{box-shadow:inset 0 0 0 3px #e65c00}100%{box-shadow:inset 0 0 0 3px #ff8c00}}
       @keyframes aclaim{0%{transform:scale(1.12)}100%{transform:scale(1)}}
-      @keyframes acap{0%{transform:scale(1);filter:saturate(1)}35%{transform:scale(1.15);background:#ffe040;filter:saturate(1.7)}70%{transform:scale(.96)}100%{transform:scale(1)}}
-      @keyframes alk{0%{box-shadow:0 0 0 7px #111 inset,0 0 0 0 rgba(17,17,17,.7)}50%{box-shadow:0 0 0 2px #111 inset,0 0 0 8px rgba(17,17,17,.12)}100%{}}
+      @keyframes boardpulse{0%{transform:scale(1);filter:saturate(1)}35%{transform:scale(1.018);filter:saturate(1.28)}100%{transform:scale(1);filter:saturate(1)}}
+      @keyframes acap{0%{transform:scale(.92);filter:saturate(1);box-shadow:0 0 0 0 rgba(250,204,21,0)}35%{transform:scale(1.18);background:#fde68a;filter:saturate(1.9);box-shadow:0 0 0 6px rgba(250,204,21,.28)}70%{transform:scale(.96);box-shadow:0 0 0 2px rgba(250,204,21,.14)}100%{transform:scale(1)}}
+      @keyframes alk{0%{box-shadow:0 0 0 8px #111 inset,0 0 0 0 rgba(17,17,17,.7);transform:scale(1.08)}45%{box-shadow:0 0 0 3px #111 inset,0 0 0 8px rgba(17,17,17,.12);transform:scale(.98)}100%{transform:scale(1)}}
 
       /* move panel */
       .mpanel{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px}
@@ -1728,6 +1847,9 @@ export default function Home() {
 
       /* ── Responsive: Smartphone (≤600px) ─────────────────────────────── */
       @media(max-width:600px){
+        .intro-card{padding:20px 16px}.intro-card h2{font-size:22px}.intro-steps{flex-direction:column}.intro-btns{flex-direction:column}
+        .what-lines{flex-direction:column}
+
         .page{padding:6px 4px}
         .hdr{flex-wrap:wrap;padding:8px 10px;gap:6px}
         .hdr-l h1{font-size:16px;letter-spacing:1px}
