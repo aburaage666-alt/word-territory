@@ -89,14 +89,6 @@ export async function selectSynergy(gameId, card) {
   return readJson(res);
 }
 
-export async function getLetterPreview(gameId, letter) {
-  try {
-    const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/preview/${letter}`, {}, 4000);
-    const data = await readJson(res);
-    return data.placements || [];
-  } catch { return []; }
-}
-
 export async function getMarket(gameId) {
   try {
     const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/market`, {}, 5000);
@@ -111,6 +103,16 @@ export async function useFreeLetter(gameId, letter) {
     body: JSON.stringify({ letter }),
   });
   return readJson(res);
+}
+
+export async function getLetterPreview(gameId, letter) {
+  if (!gameId || !letter) return { letter: letter || "", moves: [] };
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/letter-preview/${encodeURIComponent(letter)}`, {}, 5000);
+    return readJson(res);
+  } catch {
+    return { letter, moves: [] };
+  }
 }
 
 export async function getAlmost(gameId) {
