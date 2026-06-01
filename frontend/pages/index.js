@@ -19,6 +19,41 @@ const tScoreWord = (st, p) => !st ? 0 : p === "RED"
   ? st.scores.redWord : st.scores.blueWord;
 const wScore = w => ({ 3:1,4:2,5:3,6:5 }[w?.length] || 0);
 
+const TERRAIN_LABELS = {
+  "CAPTURE": "Capture",
+  "DOUBLE CAPTURE": "Double Capture",
+  "BRIDGE": "Bridge",
+  "CUT": "Cut",
+  "FORTIFY CHAIN": "Fortify Chain",
+  "LONG PATH": "Long Path",
+  "LONG PATH": "Long Path",
+  "MEGA TERRITORY": "Mega Territory Swing",
+  "CROSS WORD": "Cross Path",
+  "FIRST CAPTURE": "First Capture",
+  "EDGE REACH": "Edge Reach",
+  "COMEBACK": "Comeback Swing",
+  "SWING MOVE": "Territory Swing",
+};
+
+function terrainComboLabel(label, move = null) {
+  const raw = String(label || "");
+  if (raw.startsWith("SYNERGY:")) return raw.replace("SYNERGY:", "").trim();
+  if (raw === "CAPTURE" && move?.captureCount) return `Captured ${move.captureCount} cell${move.captureCount === 1 ? "" : "s"}`;
+  if (raw === "DOUBLE CAPTURE" && move?.captureCount) return `Double Capture (+${move.captureCount} cells)`;
+  if (raw === "BRIDGE") return "Bridge — connected zones";
+  if (raw === "CUT") return "Cut — split enemy territory";
+  if (raw === "FORTIFY CHAIN") return "Fortify Chain — locked ground";
+  if (raw === "LONG PATH" || raw === "LONG PATH") return "Long Path bonus";
+  return TERRAIN_LABELS[raw] || raw;
+}
+
+function terrainMoveLabel(m) {
+  if (!m) return "";
+  const labels = (m.comboLabels || []).map(x => terrainComboLabel(x, m));
+  return `${m.word} — Territory Swing +${m.territoryGained}${labels.length ? " · " + labels.join(" · ") : ""}`;
+}
+
+
 const LS_DAILY  = "wt_daily_";
 const LS_PREM   = "wt_premium";  // ③⑤ premium flag
 const LS_STREAK = "wt_streak";
@@ -72,7 +107,7 @@ function buildShare(num, ds, r) {
     `${rankEmoji} ${rank} — ${capturePct}% captured`,
     ``,
     result + `  ·  ${r.turns} turns`,
-    r.bestMove ? `Best word: ${r.bestMove}` : null,
+    r.bestMove ? `Best Territorial Swing: ${r.bestMove}` : null,
     ``,
     emojiBoard,
     `word-territory1.onrender.com`,
@@ -160,15 +195,15 @@ function HistItem({ m }) {
     <div className="hi">
       <div className="hi-head"><strong>T{m.turn} {m.player}</strong><span className="hiw">{m.word}</span></div>
       {m.moveType === "WORD" && (
-        <div className="hi-stats">+{m.territoryGained}T +{m.wordScoreGained}W 🔒{m.fortifiedCellsGained}{m.captureCount > 0 ? ` ✦${m.captureCount}cap` : ""}</div>
+        <div className="hi-stats">Territory Swing +{m.territoryGained} · +{m.wordScoreGained}W{m.fortifiedCellsGained>0 ? ` · Locked ${m.fortifiedCellsGained}` : ""}{m.captureCount > 0 ? ` · Captured ${m.captureCount}` : ""}</div>
       )}
       {m.comboLabels?.length > 0 && <div className="chips">
               {m.comboLabels.map((x,xi) => {
-                if (x.startsWith('SYNERGY:')) {
-                  const msg = x.replace('SYNERGY:','').trim();
-                  return <span key={xi} className="chip combo synergy-chip" title={msg}>✦ {msg}</span>;
+                const label = terrainComboLabel(x, m);
+                if (String(x).startsWith('SYNERGY:')) {
+                  return <span key={xi} className="chip combo synergy-chip" title={label}>✦ {label}</span>;
                 }
-                return <span key={xi} className="chip combo">{x}</span>;
+                return <span key={xi} className="chip combo">{label}</span>;
               })}
             </div>}
     </div>
@@ -250,7 +285,7 @@ function PremiumModal({ onClose }) {
               <li>✓ Daily Challenge (1/day)</li>
               <li>✓ Normal Bot unlimited</li>
               <li>✓ Daily Leaderboard</li>
-              <li>✓ Move Preview</li>
+              <li>✓ Territory Preview</li>
               <li className="locked-feat">✗ Strong Bot unlimited</li>
               <li className="locked-feat">✗ Daily Streak stats</li>
               <li className="locked-feat">✗ Puzzle Mode (coming)</li>
@@ -264,7 +299,7 @@ function PremiumModal({ onClose }) {
               <li>✓ Daily Challenge (1/day)</li>
               <li>✓ Normal Bot unlimited</li>
               <li>✓ Daily Leaderboard</li>
-              <li>✓ Move Preview</li>
+              <li>✓ Territory Preview</li>
               <li>✓ <strong>Strong Bot unlimited</strong></li>
               <li>✓ <strong>Daily Streak + stats</strong></li>
               <li>✓ <strong>Puzzle Mode</strong></li>
@@ -500,7 +535,7 @@ export default function Home() {
       const r = {
         redScore: redCells, blueScore: tScore(state, "BLUE"),
         winner: state.winner, turns: state.turn - 1,
-        bestMove: best ? `${best.word} (+${best.territoryGained}T)` : null,
+        bestMove: best ? `${best.word} (Territory Swing +${best.territoryGained})` : null,
         openingName: state.openingName,
         capturePct,
         emojiBoard: buildEmojiBoard(state.board),
@@ -732,7 +767,7 @@ export default function Home() {
                 -(a.territoryGained*2+a.wordScoreGained*1.5+a.fortifiedCellsGained*2+(a.captureCount?5:0)+(a.comboLabels?.length||0)*1.5))
     .slice(0,3);
   const bestMove = topMoves[0] || null;
-  const moveLabel = (m) => !m ? "" : `${m.word} — ${(m.comboLabels||[]).map(x => x.startsWith('SYNERGY:') ? x.replace('SYNERGY:','').trim() : x).join(' + ') || `+${m.territoryGained}T`}`;
+  const moveLabel = terrainMoveLabel;
 
   if (!state) return (
     <main className="loading">
@@ -771,7 +806,7 @@ export default function Home() {
       <div className="hdr">
         <div className="hdr-l">
           <h1>WORD TERRITORY{dailyMode&&dailyInfo&&<span className="dpill">Daily #{dailyInfo.dayNumber}</span>}</h1>
-          <p className="sub">Opening: {state.openingName} · {thinking?"Bot thinking…":state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
+          <p className="sub">Opening: {state.openingName} · Bot: {state.botStyle || "Raider"} · {thinking?"Bot thinking…":state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
         </div>
         <div className="hdr-r">
           {!dailyMode&&(
@@ -809,7 +844,7 @@ export default function Home() {
       {tutTurns === 0 && human() && (
         <div className="firstmove-banner">
           <strong>How to play:</strong>{" "}
-          Tap a <span className="fm-green">green square</span> → type a letter → connect letters to make a word → press <strong>Capture Word</strong>
+          Tap a <span className="fm-green">green square</span> → type a letter → connect letters to make a word → press <strong>Claim Territory</strong>
         </div>
       )}
       {/* ── score bar ── */}
@@ -831,10 +866,10 @@ export default function Home() {
         <div className="rules">
           <strong>Build words from a shared draft. Place letters. Capture territory.</strong>
           <ol>
-            <li>Tap a <em>green square</em> → type any letter → connect letters to make a 3–6 letter word → press <strong>Capture Word ⚔</strong>.</li>
+            <li>Tap a <em>green square</em> → type any letter → connect letters to make a 3–6 letter word → press <strong>Claim Territory ⚔</strong>.</li>
             <li>Example: board has D–S–T, place U → select D→U→S→T → DUST! Your letter can go anywhere in the path.</li>
             <li>Enclose opponent cells to <strong>capture</strong> them. Surrounded own cells become 🏰 <strong>Fortified</strong>.</li>
-            <li><strong>Role Bonuses</strong> — earn extra territory: BRIDGE +3T · CUT +2T · CROSS WORD +2T · POWER WORD +1T</li>
+            <li><strong>Role Bonuses</strong> — earn extra territory: BRIDGE +3T · CUT +2T · CROSS WORD +2T · LONG PATH +1T</li>
             <li><strong>Seed</strong> — place a letter without capturing when stuck. Good for setting up future words.</li>
             <li><strong>Goal:</strong> More red cells than blue wins. Territory beats vocabulary.</li>
             <li><strong>Daily Challenge</strong> — same board worldwide each day. One attempt. Strong bot.</li>
@@ -843,7 +878,7 @@ export default function Home() {
       )}
 
       {/* ── banners ── */}
-      {dailyMode&&<div className="dbanner">🗓️ Daily #{dailyInfo?.dayNumber} · {dailyInfo?.dateStr} · Strong Bot{streak>1?` · 🔥 ${streak} day streak`:""}</div>}
+      {dailyMode&&<div className="dbanner">🗓️ Daily #{dailyInfo?.dayNumber} · {dailyInfo?.dateStr} · Strong Bot · {state.botStyle || "Raider"}{streak>1?` · 🔥 ${streak} day streak`:""}</div>}
       {thinking&&<div className="bnr thinking">Bot is thinking…</div>}
       {synergyFlash&&<div className="bnr synergy-flash">{synergyFlash}</div>}
           {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
@@ -870,7 +905,7 @@ export default function Home() {
                     attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
                     inPath={inPathOpponentSet.has(k)}
                     onClick={()=>clickCell(cell.row,cell.col)}/>
-                  {showVp && <div className={`vp-overlay vp-${vp.tier || 'basic'}`} title={vp.word ? `${vp.word} +${vp.gain||0}T` : 'Setup'}>
+                  {showVp && <div className={`vp-overlay vp-${vp.tier || 'basic'}`} title={vp.word ? `${vp.word} · Territory Swing +${vp.gain||0}` : 'Setup'}>
                     <span className="vp-num">{(Number(vp.gain)||0) > 0 ? `+${vp.gain}` : 'SET'}</span>
                     {vp.tier==='strong' && <span className="vp-star">★</span>}
                   </div>}
@@ -882,13 +917,14 @@ export default function Home() {
           {/* ── Winner Banner ── */}
           {state.winner && (
             <div className="winner-banner">
+              <div className="battle-title">Battle Report</div>
               {state.winner === "DRAW" ? "🤝 Draw" :
                state.winner === "RED"  ? "🔴 RED wins!" :
                                          "🔵 BLUE wins!"}
               <span className="winner-score">
                 {state.winner !== "DRAW" && ` · ${Math.max(redT,blueT)}–${Math.min(redT,blueT)}`}
               </span>
-              {bestMove && <div className="best-move-inline">Best Move: <strong>{moveLabel(bestMove)}</strong></div>}
+              {bestMove && <div className="best-move-inline">Best Territorial Swing: <strong>{moveLabel(bestMove)}</strong></div>}
             </div>
           )}
 
@@ -918,12 +954,12 @@ export default function Home() {
                         .catch(()=>setValuePrev([]));
                     }}
                     disabled={!human()}
-                    title={s.bestWord ? `Best: ${s.bestWord} +${s.bestGain}T` : 'Setup / no direct word'}
+                    title={s.bestWord ? `Best Swing: ${s.bestWord} · Territory Swing +${s.bestGain}` : 'Setup / no direct word'}
                   >
                     <span className="lm-letter">{ltr}</span>
                     {s.wordCount > 0 ? (
                       <span className="lm-stats">
-                        {s.bestGain > 0 && <span className="lm-gain">+{s.bestGain}T</span>}
+                        {s.bestGain > 0 && <span className="lm-gain">Swing +{s.bestGain}</span>}
                         {s.wordCount > 0 && <span className="lm-count">{s.wordCount}w</span>}
                         {s.roles?.length > 0 && <span className="lm-role">{s.roles[0].substring(0,3)}</span>}
                       </span>
@@ -1003,15 +1039,15 @@ export default function Home() {
                     :<>
                       <div className="pvstats">
                         {preview.isInDictionary?"✓ Valid":"Not in dictionary"}
-                        {" · "}+{preview.wordScore}pts · +{preview.territoryGain}T
-                        {preview.lockGain>0&&` · 🔒${preview.lockGain}`}
+                        {" · "}+{preview.wordScore}pts · Territory Swing +{preview.territoryGain}
+                        {preview.lockGain>0&&` · Locked ${preview.lockGain}`}
                         {preview.captureHappened&&<span className="pvcap"> ⚔ CAPTURE +{preview.captureCount||1}</span>}
                       </div>
                       {preview.comboLabels?.length>0&&<div className="chips">
                         {preview.comboLabels.map((x,xi)=>{
                           if(x.startsWith('SYNERGY:')){
                             const msg=x.replace('SYNERGY:','').trim();
-                            return <span key={xi} className="chip combo synergy-chip" title={msg}>✦ SYNERGY</span>;
+                            return <span key={xi} className="chip combo synergy-chip" title={msg}>✦ {msg}</span>;
                           }
                           return <span key={xi} className="chip combo">{x}</span>;
                         })}
@@ -1020,7 +1056,7 @@ export default function Home() {
                 ):(
                   <div className="pvhint">
                     {!placed
-                      ? (market.active.length > 0 ? (thinking ? "Bot is thinking..." : state?.winner ? "Game Over" : "Choose a tile from Letter Market above ↑ then tap a green square.") : "Tap a green square to place a letter.")
+                      ? (market.active.length > 0 ? (thinking ? "Bot is thinking..." : state?.winner ? "Battle Report" : "Choose a tile from Letter Market above ↑ then read the Territory Preview.") : "Tap a green square to place a letter.")
                       : !letter
                       ? "Type one letter."
                       : path.length < 2
@@ -1033,7 +1069,7 @@ export default function Home() {
               </div>
             </div>
             <div className="brow">
-              <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word ⚔" : "Submit"}</button>
+              <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Claim Territory ⚔" : "Submit"}</button>
               {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()} title={state?.selectedSynergy==="SEED_TACTICIAN" ? "Seed (free — +3T next word)" : "Seed (opponent +1T)"}>
               Seed{state?.selectedSynergy!=="SEED_TACTICIAN" && <span style={{fontSize:10,color:"#e63946",marginLeft:3}}>-1T</span>}
             </button>}
@@ -1144,8 +1180,8 @@ export default function Home() {
                   <div className="scres">{(dailyResult?.winner??state.winner)==="RED"?"✅ WIN":(dailyResult?.winner??state.winner)===null?"🤝 DRAW":"❌ LOSS"}</div>
                   <div className="muted tac">{(dailyResult?.turns??state.turn-1)} turns · Territory ×1.5 + Words</div>
                 </div>
-                {bestMove && <div className="best-move-card"><strong>Best Move:</strong> {moveLabel(bestMove)}</div>}
-                {topMoves.length>0&&<><h3>Top Moves</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
+                {bestMove && <div className="best-move-card"><strong>Best Territorial Swing:</strong> {moveLabel(bestMove)}</div>}
+                {topMoves.length>0&&<><h3>Top Territorial Swings</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
 
                 {/* Share card */}
                 {shareText&&(
@@ -1182,14 +1218,14 @@ export default function Home() {
               </>
             ):(
               <>
-                <h2>Game Over</h2>
+                <h2>Battle Report</h2>
                 <p>Winner: <strong>{state.winner||"Draw"}</strong></p>
                 <div className="scard">
                   <div className="scrow"><span>🔴 RED</span><strong>{redT} cells</strong></div>
                   <div className="scrow"><span>🔵 BLUE</span><strong>{blueT} cells</strong></div>
                 </div>
-                {bestMove && <div className="best-move-card"><strong>Best Move:</strong> {moveLabel(bestMove)}</div>}
-                {topMoves.length>0&&<><h3>Top Moves</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
+                {bestMove && <div className="best-move-card"><strong>Best Territorial Swing:</strong> {moveLabel(bestMove)}</div>}
+                {topMoves.length>0&&<><h3>Top Territorial Swings</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
                 <div className="modal-btns">
                   <button className="bprim" onClick={()=>boot(mode)}>New Game</button>
                   {dailyInfo&&!dailyResult&&<button onClick={()=>{setSum(false);bootDaily();}}>Daily Challenge</button>}
@@ -1307,7 +1343,7 @@ export default function Home() {
                        font-weight:800;cursor:pointer;font-size:13px}
       .lm-free-confirm:hover{background:#d97706}
 
-      /* Value Preview overlay */
+      /* Territory Preview overlay */
       .vp-overlay{position:absolute;bottom:5px;right:5px;transform:none;
                   font-size:10px;font-weight:900;border-radius:5px;padding:1px 5px;
                   pointer-events:none;white-space:nowrap;z-index:10;box-shadow:0 1px 4px rgba(0,0,0,.16)}
@@ -1332,6 +1368,7 @@ export default function Home() {
       /* Winner banner */
       .winner-banner{background:#111;color:#fff;text-align:center;padding:14px;font-size:22px;
                      font-weight:900;border-radius:12px;margin-bottom:8px;letter-spacing:1px}
+      .battle-title{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#94a3b8;margin-bottom:4px}
       .winner-score{font-size:16px;font-weight:400;color:#aaa;margin-left:8px}
       .best-move-inline{font-size:13px;color:#f8fafc;margin-top:4px;letter-spacing:.2px}
       .best-move-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin:12px 0;font-size:13px;color:#111}
