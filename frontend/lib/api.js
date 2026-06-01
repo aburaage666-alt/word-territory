@@ -105,6 +105,16 @@ export async function useFreeLetter(gameId, letter) {
   return readJson(res);
 }
 
+export async function getLetterPreview(gameId, letter) {
+  if (!gameId || !letter) return { letter: letter || "", moves: [] };
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/letter-preview/${encodeURIComponent(letter)}`, {}, 5000);
+    return readJson(res);
+  } catch {
+    return { letter, moves: [] };
+  }
+}
+
 export async function getAlmost(gameId) {
   try {
     const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/almost`, {}, 5000);
