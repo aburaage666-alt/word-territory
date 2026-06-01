@@ -58,6 +58,7 @@ class GameState(BaseModel):
     vsBot: bool = True
     botPlayer: Player = "BLUE"
     botLevel: BotLevel = "normal"
+    botStyle: str = ""
     openingName: str = ""
     lastChangedCells: List[Coord] = []
     lastCapturedCells: List[Coord] = []
