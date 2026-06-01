@@ -62,6 +62,10 @@ class GameState(BaseModel):
     lastCapturedCells: List[Coord] = []
     lastFortifiedCells: List[Coord] = []
     lastComboLabels: List[str] = []
+    # ── Synergy Card ───────────────────────────────────────────────────────
+    synergyOptions:  List[str] = []   # 3 card names shown at game start
+    selectedSynergy: str       = ""   # chosen card name (empty = not chosen yet)
+    synergyState:    dict      = {}   # card-specific state (e.g. firstLockDone)
     # ── Letter Market ──────────────────────────────────────────────────────
     marketLetters: List[str] = []      # 3 active letters to choose from
     previewLetters: List[str] = []     # next 3 letters coming
