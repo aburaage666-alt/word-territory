@@ -449,7 +449,7 @@ export default function Home() {
   // ── bot auto-move ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state || !gameId) return;
-    if (state.winner !== undefined && state.winner !== "") return;  // any winner incl. DRAW
+    if (state.winner && state.winner !== "") return;  // stops on RED/BLUE/DRAW
     if (state.currentPlayer !== state.botPlayer) return;
     let cancelled = false;
     const run = async () => {
@@ -474,7 +474,7 @@ export default function Home() {
   // ── game over ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state) return;
-    if (state.winner === undefined || state.winner === "") return;  // not yet set
+    if (!state.winner || state.winner === "") return;  // not yet set
     if (summaryFired.current) return;
     summaryFired.current = true;
     setSum(true);
@@ -540,7 +540,7 @@ export default function Home() {
   }, [placed]);
 
   // ── board helpers ────────────────────────────────────────────────────────
-  const human = () => state && !thinking && !state.winner && state.winner !== null && state.currentPlayer !== state.botPlayer;
+  const human = () => state && !thinking && !state.winner && state.currentPlayer !== state.botPlayer;
   const isSel = (r,c) => path.some(p => p.row===r && p.col===c);
 
   // Opponent cells adjacent to any placeable empty cell = attackable
