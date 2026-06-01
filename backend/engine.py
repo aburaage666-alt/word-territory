@@ -94,6 +94,20 @@ def choose_opening():
     return best
 
 
+BOT_STYLES = ["Builder", "Raider", "Cutter", "Expander", "Defender"]
+
+def choose_bot_style(bot_level: str = "normal") -> str:
+    """Pick a visible bot personality for the match.
+
+    This is primarily a UX/positioning layer: it makes the opponent feel like
+    a territory strategist rather than a generic word AI. The current move
+    engine remains conservative; future versions can weight decisions by style.
+    """
+    if bot_level == "strong":
+        return random.choice(["Raider", "Cutter", "Builder"])
+    return random.choice(BOT_STYLES)
+
+
 def build_initial_state(bot_level: str = "normal", opening_idx: int | None = None) -> GameState:
     board = [[Cell(row=r, col=c) for c in range(BOARD_SIZE)] for r in range(BOARD_SIZE)]
     if opening_idx is not None:
@@ -116,6 +130,7 @@ def build_initial_state(bot_level: str = "normal", opening_idx: int | None = Non
         vsBot=True,
         botPlayer="BLUE",
         botLevel=bot_level,
+        botStyle=choose_bot_style(bot_level),
         openingName=opening_name,
         lastChangedCells=[],
         lastCapturedCells=[],
@@ -303,11 +318,11 @@ SYNERGY_CARDS = {
         "effect": "After a Seed move, your next word earns +3T bonus.",
         "flavor": "Every setup has its reward.",
     },
-    "POWER_SEEKER": {
-        "name": "Power Seeker",
+    "PATH_SEEKER": {
+        "name": "Path Seeker",
         "icon": "⚡",
-        "effect": "POWER WORD grants +3T instead of +1T.",
-        "flavor": "Vocabulary is territory.",
+        "effect": "LONG PATH grants +3T instead of +1T.",
+        "flavor": "Long paths reshape the map.",
     },
 }
 
@@ -360,7 +375,7 @@ def apply_synergy_bonus(state: GameState, combos: list[str], player: str,
         if state.synergyState.get("seedPending"):
             bonus += 3
 
-    elif card == "POWER_SEEKER" and "POWER WORD" in combos:
+    elif card == "PATH_SEEKER" and "LONG PATH" in combos:
         bonus += 2          # +2 on top of base +1 = +3 total
 
     return bonus
@@ -391,7 +406,7 @@ def synergy_activation_text(state: GameState, combos: list[str], player: str,
         return f"{name} activated! +{bonus}T"
     if card == 'SEED_TACTICIAN':
         return f"{name} activated! +{bonus}T"
-    if card == 'POWER_SEEKER':
+    if card == 'PATH_SEEKER':
         return f"{name} activated! +{bonus}T"
     return f"{name} activated! +{bonus}T"
 
@@ -460,8 +475,8 @@ def _letter_best_stats(state: GameState, letter: str) -> dict:
     roles = []
     for m in moves[:3]:
         w = m.get("word", "")
-        if len(w) >= 5 and "POWER WORD" not in roles:
-            roles.append("POWER WORD")
+        if len(w) >= 5 and "LONG PATH" not in roles:
+            roles.append("LONG PATH")
     return {
         "wordCount": len(moves),
         "bestGain":  best.get("territory_gain", 0),
@@ -743,13 +758,13 @@ def get_letter_preview_moves(state: GameState, letter: str, limit: int = 12) -> 
                 + last.captureCount * 5
                 + (4 if "BRIDGE" in combos else 0)
                 + (4 if "CUT" in combos else 0)
-                + (3 if "POWER WORD" in combos else 0)
+                + (3 if "LONG PATH" in combos else 0)
                 + (3 if any(str(c).startswith("SYNERGY") for c in combos) else 0)
             )
             kind = "SAFE"
             if last.captureCount > 0 or "BRIDGE" in combos or "CUT" in combos or any(str(c).startswith("SYNERGY") for c in combos):
                 kind = "POWER"
-            elif len(last.word) >= 5 or "POWER WORD" in combos:
+            elif len(last.word) >= 5 or "LONG PATH" in combos:
                 kind = "LONG"
             elif last.territoryGained <= 2:
                 kind = "SETUP"
@@ -901,7 +916,7 @@ def combo_labels(word: str, territory_gain: int, lock_gain: int,
 
     # ── Power moves ───────────────────────────────────────────────────────────
     if len(word) >= 5:
-        labels.append("POWER WORD")
+        labels.append("LONG PATH")
     if territory_gain >= 6:
         labels.append("MEGA TERRITORY")
     if lock_gain >= 3:
@@ -1117,7 +1132,7 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     if "CUT" in combos:           bonus += 2
     if "FORTIFY CHAIN" in combos: bonus += 2
     if "DOUBLE CAPTURE" in combos:bonus += 1
-    if "POWER WORD" in combos:    bonus += 1
+    if "LONG PATH" in combos:    bonus += 1
     if "MEGA TERRITORY" in combos:bonus += 1
     # Cross Word (もじぴったん的連鎖)
     if "CROSS WORD" in combos:    bonus += 2
@@ -1553,7 +1568,7 @@ def choose_bot_move(state: GameState):
             if label in ("BRIDGE", "CUT"):           combo_value += 8
             elif label in ("CROSS WORD", "FORTIFY CHAIN"): combo_value += 5
             elif label in ("DOUBLE CAPTURE", "COMEBACK"): combo_value += 4
-            elif label in ("POWER WORD", "CAPTURE"):  combo_value += 3
+            elif label in ("LONG PATH", "CAPTURE"):  combo_value += 3
             elif label in ("EDGE REACH", "FIRST CAPTURE"): combo_value += 2
             else:                                     combo_value += 1
         value = my_value + word_score(move["word"]) * 1.4 + combo_value
