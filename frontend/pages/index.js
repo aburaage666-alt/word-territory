@@ -7,7 +7,6 @@ import {
   joinWaitlist, passTurn, previewMove, seedMove, submitDailyScore, submitMove,
   useFreeLetter,
 } from "../lib/api";
-} from "../lib/api";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const asKey = (r, c) => `${r}-${c}`;
