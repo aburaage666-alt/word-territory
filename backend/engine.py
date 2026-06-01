@@ -122,6 +122,10 @@ def build_initial_state(bot_level: str = "normal", opening_idx: int | None = Non
         lastFortifiedCells=[],
         lastComboLabels=[],
     )
+    # Initialize Synergy Card options (3 random cards to choose from)
+    state.synergyOptions = pick_synergy_options()
+    state.selectedSynergy = ""
+    state.synergyState = {}
     # Initialize Letter Market
     active, preview = generate_letter_market(state)
     state.marketLetters  = active
@@ -217,6 +221,140 @@ _LETTER_WEIGHTS = {
 }
 _ALL_LETTERS = list(_LETTER_WEIGHTS.keys())
 _WEIGHTS     = [_LETTER_WEIGHTS[l] for l in _ALL_LETTERS]
+
+
+# ── Synergy Card Definitions ──────────────────────────────────────────────────
+
+SYNERGY_CARDS = {
+    "BRIDGE_MASTER": {
+        "name": "Bridge Master",
+        "icon": "🌉",
+        "effect": "BRIDGE grants +5T instead of +3T.",
+        "flavor": "Unite what was divided.",
+    },
+    "FORTIFIER": {
+        "name": "Fortifier",
+        "icon": "🏰",
+        "effect": "First Fortify +8T. Every Fortify after that +3T instead of +2T.",
+        "flavor": "Walls that hold, win.",
+    },
+    "CUT_HUNTER": {
+        "name": "Cut Hunter",
+        "icon": "⚔️",
+        "effect": "After CUT, your next Capture earns +2T bonus.",
+        "flavor": "Divide, then conquer.",
+    },
+    "LONG_WORD": {
+        "name": "Long Word",
+        "icon": "📖",
+        "effect": "5-letter words +3T extra. 6-letter words +5T extra.",
+        "flavor": "The longer the word, the wider the territory.",
+    },
+    "VOWEL_ENGINE": {
+        "name": "Vowel Engine",
+        "icon": "🔤",
+        "effect": "Placing a vowel (A/E/I/O/U) gives +1T bonus.",
+        "flavor": "Language flows through vowels.",
+    },
+    "COMEBACK_SPARK": {
+        "name": "Comeback Spark",
+        "icon": "🔥",
+        "effect": "When losing by 10+ cells, all role bonuses +1T extra.",
+        "flavor": "Pressure creates diamonds.",
+    },
+    "SEED_TACTICIAN": {
+        "name": "Seed Tactician",
+        "icon": "🌱",
+        "effect": "After a Seed move, your next word earns +3T bonus.",
+        "flavor": "Every setup has its reward.",
+    },
+    "POWER_SEEKER": {
+        "name": "Power Seeker",
+        "icon": "⚡",
+        "effect": "POWER WORD grants +3T instead of +1T.",
+        "flavor": "Vocabulary is territory.",
+    },
+}
+
+
+def pick_synergy_options() -> list[str]:
+    """Pick 3 random synergy card keys for the player to choose from."""
+    import random as _r
+    return _r.sample(list(SYNERGY_CARDS.keys()), 3)
+
+
+def apply_synergy_bonus(state: GameState, combos: list[str], player: str,
+                        word: str, letter: str) -> int:
+    """Return extra territory from the active synergy card."""
+    card = state.selectedSynergy
+    if not card:
+        return 0
+
+    bonus = 0
+    opp = "BLUE" if player == "RED" else "RED"
+    my_t  = sum(1 for r in state.board for c in r if c.owner == player)
+    opp_t = sum(1 for r in state.board for c in r if c.owner == opp)
+
+    if card == "BRIDGE_MASTER" and "BRIDGE" in combos:
+        bonus += 2          # +2 on top of the base +3 = +5 total
+
+    elif card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
+        if not state.synergyState.get("firstLockDone"):
+            bonus += 6      # first time: +8 total (base +2, synergy +6)
+        else:
+            bonus += 1      # every time after: +3 total (base +2, synergy +1)
+
+    elif card == "CUT_HUNTER" and "CAPTURE" in combos:
+        if state.synergyState.get("cutPending"):
+            bonus += 2
+
+    elif card == "LONG_WORD":
+        wlen = len(word)
+        if wlen == 5:
+            bonus += 3
+        elif wlen >= 6:
+            bonus += 5
+
+    elif card == "VOWEL_ENGINE" and letter.upper() in "AEIOU":
+        bonus += 1
+
+    elif card == "COMEBACK_SPARK" and (opp_t - my_t) >= 10:
+        bonus += len(combos)  # +1 per combo when losing badly
+
+    elif card == "SEED_TACTICIAN":
+        if state.synergyState.get("seedPending"):
+            bonus += 3
+
+    elif card == "POWER_SEEKER" and "POWER WORD" in combos:
+        bonus += 2          # +2 on top of base +1 = +3 total
+
+    return bonus
+
+
+def update_synergy_state(state: GameState, combos: list[str],
+                         is_seed: bool = False) -> dict:
+    """Update synergy state machine after a move."""
+    ss = dict(state.synergyState)
+    card = state.selectedSynergy
+    if not card:
+        return ss
+
+    if card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
+        ss["firstLockDone"] = True
+
+    elif card == "CUT_HUNTER":
+        if "CUT" in combos:
+            ss["cutPending"] = True
+        elif "CAPTURE" in combos and ss.get("cutPending"):
+            ss["cutPending"] = False  # consumed
+
+    elif card == "SEED_TACTICIAN":
+        if is_seed:
+            ss["seedPending"] = True
+        else:
+            ss["seedPending"] = False  # consumed after any word
+
+    return ss
 
 
 def _letter_enables_word(state: GameState, letter: str, max_check: int = 8) -> bool:
@@ -941,6 +1079,7 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str, advance_m
     temp.lastCapturedCells = []
     temp.lastFortifiedCells = []
     temp.lastComboLabels = []
+    temp.synergyState = update_synergy_state(temp, [], is_seed=True)
     item = MoveHistoryItem(
         turn=state.turn,
         player=player,
