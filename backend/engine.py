@@ -992,6 +992,13 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     if "EDGE REACH" in combos:    bonus += 1
     if "COMEBACK" in combos:      bonus += 2
 
+    # Synergy Card bonus (Balatro-like build direction)
+    synergy_bonus = apply_synergy_bonus(temp, combos, player, word, letter)
+    if synergy_bonus > 0:
+        bonus += synergy_bonus
+        if "SYNERGY" not in combos:
+            combos.append("SYNERGY")
+
     # ── Anti-snowball: cap bonus when player is already winning by 10+ cells ──
     if bonus > 0 and temp.scores:
         my_t   = temp.scores.redTerritory if player == "RED" else temp.scores.blueTerritory
@@ -1044,6 +1051,7 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     temp.lastCapturedCells = delta["captured"]
     temp.lastFortifiedCells = delta["newly_locked"]
     temp.lastComboLabels = combos
+    temp.synergyState = update_synergy_state(temp, combos, is_seed=False)
     temp.currentPlayer = other_player(player)
     temp.turn += 1
     temp.consecutivePasses = 0
