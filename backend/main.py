@@ -221,6 +221,52 @@ def bot_move(game_id: str):
     return next_state
 
 
+@app.post("/games/{game_id}/auto-move", response_model=GameState)
+def auto_move(game_id: str):
+    """Spectator / demo mode: let the current player be controlled by bot logic.
+
+    Unlike /bot-move, this works for either RED or BLUE. It is designed for
+    Bot-vs-Bot demo playback, trailer capture, and balance testing.
+    """
+    state = GAMES.get(game_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if state.winner:
+        return state
+
+    import concurrent.futures, random
+
+    def run_bot():
+        return apply_bot_move(state)
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(run_bot)
+            next_state = future.result(timeout=4)
+    except concurrent.futures.TimeoutError:
+        board = state.board
+        legal = [
+            (r, c)
+            for r in range(len(board))
+            for c in range(len(board[r]))
+            if not board[r][c].letter and any(
+                board[r2][c2].letter
+                for r2, c2 in [(r-1,c),(r+1,c),(r,c-1),(r,c+1)]
+                if 0 <= r2 < len(board) and 0 <= c2 < len(board[r2])
+            )
+        ]
+        if legal:
+            row, col = random.choice(legal)
+            import string
+            letter = random.choice(string.ascii_uppercase)
+            next_state = apply_seed_move(state, row, col, letter)
+        else:
+            next_state = pass_turn(state)
+
+    GAMES[game_id] = next_state
+    return next_state
+
+
 # ── Health check (for UptimeRobot / monitoring — accepts GET and HEAD) ────────
 
 @app.get("/health")
