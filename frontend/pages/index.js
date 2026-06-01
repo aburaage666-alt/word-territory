@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard,
-  getAlmost, getMarket, getSuggestions, getSynergyOptions, selectSynergy,
+  getAlmost, getLetterPreview, getMarket, getSuggestions, getSynergyOptions, selectSynergy,
   joinWaitlist, passTurn, previewMove, seedMove, submitDailyScore, submitMove,
   useFreeLetter,
 } from "../lib/api";
@@ -135,20 +135,27 @@ function updateStreak(dateStr) {
 }
 
 // ── Cell ──────────────────────────────────────────────────────────────────────
-function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, attack, inPath, onClick }) {
+function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, attack, inPath, movePreview, hotPreview, onPreviewEnter, onPreviewLeave, onClick }) {
   const cls = ["cell",
     cell.owner === "RED" ? "cr" : cell.owner === "BLUE" ? "cb" : "",
     cell.fortified ? "ft" : "", sel ? "sl" : "", placed ? "pl" : "",
     legal ? "lg" : "", disabled && !sel ? "dm" : "",
     attack ? "atk" : "",   // opponent cell that can be attacked
     inPath ? "inpath" : "", // opponent cell currently in selected path (will be captured)
+    movePreview ? "mv" : "",
+    movePreview && (movePreview.kind === "POWER" || movePreview.captureCount > 0) ? "mvpower" : "",
+    hotPreview ? "mvhot" : "",
   ].filter(Boolean).join(" ");
   return (
     <button className={cls} onClick={onClick} disabled={disabled}
+      onMouseEnter={() => movePreview && onPreviewEnter?.(movePreview)}
+      onMouseLeave={() => movePreview && onPreviewLeave?.()}
+      title={movePreview ? `${movePreview.word} +${movePreview.territoryGain}T${movePreview.captureCount ? ` / ${movePreview.captureCount} capture` : ""}${movePreview.comboLabels?.length ? ` / ${movePreview.comboLabels.join(" · ")}` : ""}` : undefined}
       data-chg={changed ? gen : null}
       data-cap={captured ? gen : null}
       data-lk={lockedNow ? gen : null}>
       {cell.letter || ""}
+      {movePreview && !cell.letter && <span className="mv-badge">+{movePreview.territoryGain}</span>}
       {attack && !inPath && <span className="atk-dot"/>}
     </button>
   );
@@ -341,6 +348,9 @@ export default function Home() {
   const [market,      setMarket]      = useState({ active:[], preview:[], stats:[], freeLetterUsed:false });
   const [freeLetter,  setFreeLetter]  = useState('');
   const [showFreeInput, setShowFreeInput] = useState(false);
+  const [letterMoves, setLetterMoves] = useState([]);
+  const [letterPreviewLoading, setLetterPreviewLoading] = useState(false);
+  const [hoverMove, setHoverMove] = useState(null);
   // Tutorial UX: track how many turns have been played
   const tutTurns = (state?.moveHistory?.length || 0);
   const isTutorial = tutTurns < 3;  // first 3 turns = beginner mode
@@ -365,6 +375,8 @@ export default function Home() {
     setMarket({ active:[], preview:[], stats:[], freeLetterUsed:false });
     setFreeLetter('');
     setShowFreeInput(false);
+    setLetterMoves([]);
+    setHoverMove(null);
   }
 
   function fallbackMarketFromState(st) {
@@ -394,7 +406,7 @@ export default function Home() {
     }
   }
   function reset() {
-    setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null);
+    setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null); setLetterMoves([]); setHoverMove(null);
     setSum(false); setCopied(false); setShareText(""); setNickname(""); setMyRank(null);
     setSubmitted(false); summaryFired.current = false;
     setShowSynergy(false); setSynergyOpts([]); setSynergy("");
@@ -557,6 +569,25 @@ export default function Home() {
     return () => clearTimeout(h);
   }, [gameId, placed, letter, JSON.stringify(path)]);
 
+
+  // Balatro-like expectation preview: select a Letter Market tile, then show best cells.
+  useEffect(() => {
+    if (!gameId || !letter || !state || state.winner || !human()) {
+      setLetterMoves([]); setHoverMove(null); return;
+    }
+    let cancelled = false;
+    setLetterPreviewLoading(true);
+    getLetterPreview(gameId, letter).then(res => {
+      if (cancelled) return;
+      setLetterMoves(res?.moves || []);
+    }).catch(() => {
+      if (!cancelled) setLetterMoves([]);
+    }).finally(() => {
+      if (!cancelled) setLetterPreviewLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [gameId, letter, state?.turn, state?.currentPlayer, state?.winner]);
+
   // Auto-focus letter input when cell is placed
   useEffect(() => {
     if (placed && letterRef.current) letterRef.current.focus();
@@ -565,6 +596,12 @@ export default function Home() {
   // ── board helpers ────────────────────────────────────────────────────────
   const human = () => state && !thinking && !state.winner && state.currentPlayer !== state.botPlayer;
   const isSel = (r,c) => path.some(p => p.row===r && p.col===c);
+  const movePreviewByCell = useMemo(() => {
+    const map = new Map();
+    (letterMoves || []).forEach(m => map.set(asKey(m.row, m.col), m));
+    return map;
+  }, [letterMoves]);
+  const bestLetterMove = letterMoves?.[0] || null;
 
   // Opponent cells adjacent to any placeable empty cell = attackable
   const opponent = state?.currentPlayer === "RED" ? "BLUE" : "RED";
@@ -868,9 +905,14 @@ export default function Home() {
             <div className="board-wrap"><div className="board">
               {state.board.map(row=>row.map(cell=>{
                 const k=asKey(cell.row,cell.col);
+                const mv = (!placed && letter) ? movePreviewByCell.get(k) : null;
                 return <Cell key={k} cell={cell}
                   sel={isSel(cell.row,cell.col)} placed={placed?.row===cell.row&&placed?.col===cell.col}
                   legal={!placed&&isLegal(cell.row,cell.col)}
+                  movePreview={mv}
+                  hotPreview={!!(hoverMove && mv && hoverMove.row === mv.row && hoverMove.col === mv.col)}
+                  onPreviewEnter={setHoverMove}
+                  onPreviewLeave={() => setHoverMove(null)}
                   changed={changedS.has(k)} captured={capturedS.has(k)} lockedNow={lockedS.has(k)}
                   disabled={isDim(cell.row,cell.col)} gen={animGen}
                   attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
@@ -908,7 +950,7 @@ export default function Home() {
                   return (
                     <button key={`${l}-${i}`}
                       className={`lm-tile ${letter===s.letter ? 'lm-selected' : ''}`}
-                      onClick={() => { setLetter(s.letter); setPath([]); setPlaced(null); setError(''); setPreview(null); }}
+                      onClick={() => { setLetter(s.letter); setPath([]); setPlaced(null); setError(''); setPreview(null); setHoverMove(null); }}
                       disabled={!human()}
                       title={s.bestWord ? `Best: ${s.bestWord} +${s.bestGain}T` : 'No words available'}
                     >
@@ -942,6 +984,27 @@ export default function Home() {
                   </div>
                 )}
               </div>
+              {letter && !placed && !state.winner && (
+                <div className="lp-strip">
+                  {letterPreviewLoading ? (
+                    <span className="lp-muted">Checking best cells for <strong>{letter}</strong>…</span>
+                  ) : hoverMove ? (
+                    <>
+                      <span className="lp-main"><strong>{hoverMove.word}</strong> +{hoverMove.territoryGain}T</span>
+                      {hoverMove.wordScore > 0 && <span className="lp-chip">+{hoverMove.wordScore}W</span>}
+                      {hoverMove.captureCount > 0 && <span className="lp-chip lp-power">⚔ {hoverMove.captureCount} cap</span>}
+                      {hoverMove.comboLabels?.slice(0,3).map(x => <span key={x} className="lp-chip lp-combo">{x}</span>)}
+                    </>
+                  ) : bestLetterMove ? (
+                    <>
+                      <span className="lp-main">Best with <strong>{letter}</strong>: <strong>{bestLetterMove.word}</strong> +{bestLetterMove.territoryGain}T</span>
+                      <span className="lp-muted">Hover/tap highlighted cells to compare.</span>
+                    </>
+                  ) : (
+                    <span className="lp-muted">No strong preview for <strong>{letter}</strong>. Use it as setup or choose another tile.</span>
+                  )}
+                </div>
+              )}
               {showFreeInput && (
                 <div className="lm-free-row">
                   <input className="lm-free-input" maxLength={1}
@@ -1287,6 +1350,20 @@ export default function Home() {
       .lm-free-confirm{background:#f59e0b;color:#fff;border:none;border-radius:8px;padding:6px 14px;
                        font-weight:800;cursor:pointer;font-size:13px}
       .lm-free-confirm:hover{background:#d97706}
+
+      .lp-strip{margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+                background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:7px 10px;
+                font-size:12px;color:#334155}
+      .lp-main{font-weight:700;color:#111827}
+      .lp-muted{color:#64748b;font-size:12px}
+      .lp-chip{background:#e0f2fe;color:#075985;border-radius:999px;padding:2px 7px;font-weight:700;font-size:11px}
+      .lp-power{background:#fee2e2;color:#991b1b}
+      .lp-combo{background:#fef3c7;color:#92400e}
+      .cell.mv{position:relative;border-color:#f59e0b!important;background:#fff7ed!important;box-shadow:inset 0 0 0 2px rgba(245,158,11,.25)}
+      .cell.mvpower{border-color:#8b5cf6!important;background:#f5f3ff!important;box-shadow:inset 0 0 0 2px rgba(139,92,246,.25)}
+      .cell.mvhot{outline:3px solid #111;outline-offset:-2px;transform:translateY(-1px)}
+      .mv-badge{position:absolute;right:2px;bottom:2px;background:#111;color:#fff;border-radius:999px;
+                min-width:18px;height:18px;line-height:18px;font-size:10px;font-weight:900;text-align:center;padding:0 4px}
 
       /* Synergy flash */
       .synergy-flash{background:linear-gradient(90deg,#1e1b4b,#312e81);color:#c7d2fe;
