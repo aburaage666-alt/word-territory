@@ -64,7 +64,7 @@ function buildShare(num, ds, r) {
   const capturePct = Math.round((r.redScore / totalCells) * 100);
   const rank = getRank(capturePct);
   const rankEmoji = getRankEmoji(capturePct);
-  const result = r.winner === "RED" ? "WIN 🎉" : r.winner === "DRAW" ? "DRAW 🤝" : "LOSS 😤";
+  const result = r.winner === "RED" ? "WIN 🎉" : r.winner === null ? "DRAW 🤝" : "LOSS 😤";
   const emojiBoard = r.emojiBoard || "";
 
   return [
@@ -316,12 +316,10 @@ export default function Home() {
   const [showSuggest, setSuggest] = useState(true);
   const [showPremium, setPremium] = useState(false);
   const [showLB,      setShowLB]  = useState(false);  // ④
-  const [showSynergy, setShowSynergy] = useState(false);
-  const [synergyOpts, setSynergyOpts] = useState([]);
-  const [synergy, setSynergy] = useState("");
 
   // Combo banner persistence
   const [comboBanner, setCombo]   = useState([]);
+  const [synergyFlash, setSynergyFlash] = useState("");
   const comboTimer = useRef(null);
   const [animGen,  setAnimGen]    = useState(0);
 
@@ -366,7 +364,7 @@ export default function Home() {
   function reset() {
     setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null);
     setSum(false); setCopied(false); setShareText(""); setNickname(""); setMyRank(null);
-    setSubmitted(false); setShowSynergy(false); summaryFired.current = false;
+    setSubmitted(false); summaryFired.current = false;
   }
   async function boot(m = mode) {
     let lastErr;
@@ -428,6 +426,9 @@ export default function Home() {
     if (!state) return;
     setAnimGen(g => g + 1);
     const c = state.lastComboLabels || [];
+    const synMsg = c.find(l => l && l.startsWith("SYNERGY:"));
+    if (synMsg) setSynergyFlash(synMsg.replace("SYNERGY:", ""));
+    else setSynergyFlash("");
     if (c.length > 0) {
       setCombo(c);
       if (comboTimer.current) clearTimeout(comboTimer.current);
@@ -438,7 +439,7 @@ export default function Home() {
   // ── bot auto-move ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state || !gameId) return;
-    if (state.winner) return;  // stop when RED / BLUE / DRAW is set
+    if (state.winner !== undefined && state.winner !== "") return;  // any winner incl. DRAW
     if (state.currentPlayer !== state.botPlayer) return;
     let cancelled = false;
     const run = async () => {
@@ -463,7 +464,7 @@ export default function Home() {
   // ── game over ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state) return;
-    if (!state.winner) return;  // not yet set; null/undefined means game still running
+    if (state.winner === undefined || state.winner === "") return;  // not yet set
     if (summaryFired.current) return;
     summaryFired.current = true;
     setSum(true);
@@ -529,7 +530,7 @@ export default function Home() {
   }, [placed]);
 
   // ── board helpers ────────────────────────────────────────────────────────
-  const human = () => !!(state && !thinking && !state.winner && state.currentPlayer !== state.botPlayer);
+  const human = () => state && !thinking && !state.winner && state.winner !== null && state.currentPlayer !== state.botPlayer;
   const isSel = (r,c) => path.some(p => p.row===r && p.col===c);
 
   // Opponent cells adjacent to any placeable empty cell = attackable
@@ -749,7 +750,7 @@ export default function Home() {
       <div className="hdr">
         <div className="hdr-l">
           <h1>WORD TERRITORY{dailyMode&&dailyInfo&&<span className="dpill">Daily #{dailyInfo.dayNumber}</span>}</h1>
-          <p className="sub">Opening: {state.openingName} · {state.winner?"Game Over":thinking?"Bot thinking…":state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
+          <p className="sub">Opening: {state.openingName} · {thinking?"Bot thinking…":state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
         </div>
         <div className="hdr-r">
           {!dailyMode&&(
@@ -823,7 +824,8 @@ export default function Home() {
       {/* ── banners ── */}
       {dailyMode&&<div className="dbanner">🗓️ Daily #{dailyInfo?.dayNumber} · {dailyInfo?.dateStr} · Strong Bot{streak>1?` · 🔥 ${streak} day streak`:""}</div>}
       {thinking&&<div className="bnr thinking">Bot is thinking…</div>}
-      {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
+      {synergyFlash&&<div className="bnr synergy-flash">{synergyFlash}</div>}
+          {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
       {error&&<div className="bnr err">{error}<button className="bx" onClick={()=>setError("")}>✕</button></div>}
 
       {/* ── layout ── */}
@@ -982,7 +984,9 @@ export default function Home() {
             </div>
             <div className="brow">
               <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word ⚔" : "Submit"}</button>
-              {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()}>Seed</button>}
+              {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()} title={state?.selectedSynergy==="SEED_TACTICIAN" ? "Seed (free — +3T next word)" : "Seed (opponent +1T)"}>
+              Seed{state?.selectedSynergy!=="SEED_TACTICIAN" && <span style={{fontSize:10,color:"#e63946",marginLeft:3}}>−1T</span>}
+            </button>}
               <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
               {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
             </div>
@@ -1057,13 +1061,14 @@ export default function Home() {
                   onClick={() => {
                     selectSynergy(gameId, card.key)
                       .then(() => { setSynergy(card.key); setShowSynergy(false); })
-                      .catch(e => { setError(e.message || "Could not select strategy"); setShowSynergy(false); });
+                      .catch(() => { setSynergy(card.key); setShowSynergy(false); });
                   }}
                 >
                   <div className="syn-icon">{card.icon}</div>
                   <div className="syn-name">{card.name}</div>
+                  {card.difficulty && <div className="syn-difficulty" data-diff={card.difficulty}>{card.difficulty}</div>}
                   <div className="syn-effect">{card.effect}</div>
-                  <div className="syn-flavor">{card.flavor}</div>
+                  {card.tip && <div className="syn-tip">{card.tip}</div>}
                 </button>
               ))}
             </div>
@@ -1085,7 +1090,7 @@ export default function Home() {
                 <div className="scard">
                   <div className="scrow"><span>🔴 YOU</span><strong>{redT} cells</strong></div>
                   <div className="scrow"><span>🔵 BOT</span><strong>{blueT} cells</strong></div>
-                  <div className="scres">{(dailyResult?.winner??state.winner)==="RED"?"✅ WIN":(dailyResult?.winner??state.winner)==="DRAW"?"🤝 DRAW":"❌ LOSS"}</div>
+                  <div className="scres">{(dailyResult?.winner??state.winner)==="RED"?"✅ WIN":(dailyResult?.winner??state.winner)===null?"🤝 DRAW":"❌ LOSS"}</div>
                   <div className="muted tac">{(dailyResult?.turns??state.turn-1)} turns · Territory ×1.5 + Words</div>
                 </div>
                 {topMoves.length>0&&<><h3>Top Moves</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
@@ -1247,6 +1252,17 @@ export default function Home() {
       .lm-free-confirm{background:#f59e0b;color:#fff;border:none;border-radius:8px;padding:6px 14px;
                        font-weight:800;cursor:pointer;font-size:13px}
       .lm-free-confirm:hover{background:#d97706}
+
+      /* Synergy flash */
+      .synergy-flash{background:linear-gradient(90deg,#1e1b4b,#312e81);color:#c7d2fe;
+                     font-size:13px;font-weight:700;padding:7px 14px;border-radius:8px;
+                     text-align:center;margin-bottom:4px;letter-spacing:.3px}
+      .syn-difficulty{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;
+                      border-radius:20px;margin-bottom:6px;letter-spacing:.5px}
+      [data-diff="Easy"]{background:#dcfce7;color:#166534}
+      [data-diff="Medium"]{background:#fef9c3;color:#854d0e}
+      [data-diff="Hard"]{background:#fee2e2;color:#991b1b}
+      .syn-tip{font-size:11px;color:#6b7280;font-style:italic;margin-top:4px;line-height:1.4}
 
       /* Winner banner */
       .winner-banner{background:#111;color:#fff;text-align:center;padding:14px;font-size:22px;
