@@ -366,6 +366,33 @@ export default function Home() {
     setFreeLetter('');
     setShowFreeInput(false);
   }
+
+  function fallbackMarketFromState(st) {
+    const active = st?.marketLetters || [];
+    return {
+      active,
+      preview: st?.previewLetters || [],
+      freeLetterUsed: !!st?.freeLetterUsed,
+      stats: active.map(l => ({ letter:l, wordCount:0, bestGain:0, bestWord:'', roles:[] })),
+    };
+  }
+
+  async function syncMarketFromServer(id, st = null) {
+    if (st?.marketLetters?.length > 0) {
+      setMarket(fallbackMarketFromState(st));
+    }
+    try {
+      const mk = await getMarket(id);
+      setMarket({
+        active: mk.active || [],
+        preview: mk.preview || [],
+        stats: mk.stats || [],
+        freeLetterUsed: !!mk.freeLetterUsed,
+      });
+    } catch (_) {
+      // Keep fallback market from GameState. Never recreate the game here.
+    }
+  }
   function reset() {
     setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null);
     setSum(false); setCopied(false); setShareText(""); setNickname(""); setMyRank(null);
@@ -665,8 +692,7 @@ export default function Home() {
     try {
       const next = await submitMove({game_id:gameId,row:placed.row,col:placed.col,letter,path});
       setState(next);
-      // Update market from state immediately
-      if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
+      await syncMarketFromServer(gameId, next);
 
       reset(); await refresh();
       getAlmost(gameId).then(setAlmost).catch(()=>{});
@@ -678,7 +704,7 @@ export default function Home() {
     try {
       const next = await seedMove(gameId,{row:placed.row,col:placed.col,letter});
       setState(next);
-      if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
+      await syncMarketFromServer(gameId, next);
 
       reset(); await refresh();
       getAlmost(gameId).then(setAlmost).catch(()=>{});
@@ -877,25 +903,28 @@ export default function Home() {
                 </span>
               </div>
               <div className="lm-active">
-                {(market.stats||[]).map((s,i) => (
-                  <button key={i}
-                    className={`lm-tile ${letter===s.letter ? 'lm-selected' : ''}`}
-                    onClick={() => { setLetter(s.letter); setPath([]); setPlaced(null); setError(''); setPreview(null); }}
-                    disabled={!human()}
-                    title={s.bestWord ? `Best: ${s.bestWord} +${s.bestGain}T` : 'No words available'}
-                  >
-                    <span className="lm-letter">{s.letter}</span>
-                    {s.wordCount > 0 ? (
-                      <span className="lm-stats">
-                        {s.bestGain > 0 && <span className="lm-gain">+{s.bestGain}T</span>}
-                        {s.wordCount > 0 && <span className="lm-count">{s.wordCount}w</span>}
-                        {s.roles?.length > 0 && <span className="lm-role">{s.roles[0].substring(0,3)}</span>}
-                      </span>
-                    ) : (
-                      <span className="lm-stats"><span className="lm-zero" style={{fontSize:10}}>no words</span></span>
-                    )}
-                  </button>
-                ))}
+                {(market.active||[]).map((l,i) => {
+                  const s = (market.stats||[]).find(x => x.letter === l) || {letter:l, wordCount:0, bestGain:0, bestWord:'', roles:[]};
+                  return (
+                    <button key={`${l}-${i}`}
+                      className={`lm-tile ${letter===s.letter ? 'lm-selected' : ''}`}
+                      onClick={() => { setLetter(s.letter); setPath([]); setPlaced(null); setError(''); setPreview(null); }}
+                      disabled={!human()}
+                      title={s.bestWord ? `Best: ${s.bestWord} +${s.bestGain}T` : 'No words available'}
+                    >
+                      <span className="lm-letter">{s.letter}</span>
+                      {s.wordCount > 0 ? (
+                        <span className="lm-stats">
+                          {s.bestGain > 0 && <span className="lm-gain">+{s.bestGain}T</span>}
+                          {s.wordCount > 0 && <span className="lm-count">{s.wordCount}w</span>}
+                          {s.roles?.length > 0 && <span className="lm-role">{s.roles[0].substring(0,3)}</span>}
+                        </span>
+                      ) : (
+                        <span className="lm-stats"><span className="lm-zero" style={{fontSize:10}}>updating</span></span>
+                      )}
+                    </button>
+                  );
+                })}
                 {/* Free Letter (Wild) */}
                 {!market.freeLetterUsed ? (
                   <button className={`lm-tile lm-free ${showFreeInput ? 'lm-selected' : ''}`}
