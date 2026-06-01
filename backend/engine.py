@@ -236,27 +236,40 @@ _SUGGESTED_EXCLUDE = frozenset({
     'VAR','FARO','TARO','GEN','TOSH','LENO','BIFF','GLIB',
     # very technical / weak bot choices
     'ION','IONA','ERG','OHM','EMU','OVA','AXE',
+    # UI/preview/bot filter: abbreviations, dictionary noise, obscure variants
+    'MPH','ETC','LIB','GLIB','BIFF','VAR','FARO','TARO','GEN','TOSH','LENO',
+    'CPU','GPU','USB','PDF','PNG','JPG','GIF','API','CSS','HTML','HTTP','URL',
+    'CEO','CFO','COO','LLC','LTD','INC','MBA','PHD','DNA','RNA','ATM','FAQ',
+    'TBSP','TSP','OZ','LBS','KG','KM','CM','MM','MPG','BTW','FYI','DIY','VPN',
+    'SQL','XML','JSON','YAML','SDK','CLI','GUI','UX','UI','AI','ML','NLP',
+
 })
 
 
 def _is_ui_word(word: str) -> bool:
-    """Return True for words suitable for hints, bot preference, and pitch-visible UI.
+    """Return True for words suitable for UI hints / bot-first choices.
 
-    The core validator can still accept the full dictionary. This only controls
-    what the game recommends or lets the bot prioritize.
+    The full dictionary remains valid for manual play, but Suggested, Almost,
+    Bot priority and Territory Preview should not push abbreviations or obscure
+    dictionary debris. This keeps the game feeling like territory strategy,
+    not dictionary trivia.
     """
-    if not word:
-        return False
     w = word.upper().strip()
     if w in _SUGGESTED_EXCLUDE:
         return False
     if len(w) < 3 or len(w) > 6:
         return False
-    # Hide all-uppercase abbreviation-like words with no clear vowel flow.
-    if len(w) == 3 and sum(1 for ch in w if ch in 'AEIOU') == 0:
+    vowels = sum(1 for ch in w if ch in 'AEIOU')
+    if vowels == 0:
+        return False
+    # 3-letter all-caps technical/measurement-looking strings are usually bad hints.
+    if len(w) == 3 and vowels <= 1 and (w.endswith('H') or w.endswith('C') or w.endswith('B')):
         return False
     # Avoid pluralized abbreviation/dictionary-noise patterns in hints.
     if len(w) <= 4 and w.endswith('S') and w[:-1] in _SUGGESTED_EXCLUDE:
+        return False
+    # Prefer ordinary-looking words in public hints; keep rare Q/X/Z/J words playable manually.
+    if len(w) <= 4 and any(ch in w for ch in 'QXZJ') and w not in {'JAM','JAR','JAW','JOG','JOY','JOKE','JUMP','QUIZ','ZERO','ZOO','AXE','FOX'}:
         return False
     return True
 
@@ -279,50 +292,66 @@ SYNERGY_CARDS = {
     "BRIDGE_MASTER": {
         "name": "Bridge Master",
         "icon": "🌉",
-        "effect": "BRIDGE grants +5T instead of +3T.",
+        "difficulty": "Medium",
+        "effect": "Connecting separated zones grants extra Territory Swing.",
+        "tip": "Look for paths that join your regions.",
         "flavor": "Unite what was divided.",
     },
     "FORTIFIER": {
         "name": "Fortifier",
         "icon": "🏰",
-        "effect": "First Fortify +8T. Every Fortify after that +3T instead of +2T.",
+        "difficulty": "Easy",
+        "effect": "First lock is powerful; later locks still add Swing.",
+        "tip": "Secure surrounded ground before expanding.",
         "flavor": "Walls that hold, win.",
     },
-    "CUT_HUNTER": {
-        "name": "Cut Hunter",
-        "icon": "⚔️",
-        "effect": "After CUT, your next Capture earns +2T bonus.",
-        "flavor": "Divide, then conquer.",
+    "CUT_SPECIALIST": {
+        "name": "Cut Specialist",
+        "icon": "✂️",
+        "difficulty": "Medium",
+        "effect": "Splitting enemy territory adds Swing and primes capture pressure.",
+        "tip": "Cut enemy regions apart, then collapse them.",
+        "flavor": "A clean cut changes the map.",
     },
-    "LONG_WORD": {
-        "name": "Long Word",
-        "icon": "📖",
-        "effect": "5-letter words +3T extra. 6-letter words +5T extra.",
-        "flavor": "The longer the word, the wider the territory.",
+    "FRONTLINE_TACTICIAN": {
+        "name": "Frontline Tactician",
+        "icon": "🗡️",
+        "difficulty": "Easy",
+        "effect": "Words drawn along the enemy frontline gain +2T.",
+        "tip": "Push where red and blue touch.",
+        "flavor": "Win the border, win the board.",
     },
-    "VOWEL_ENGINE": {
-        "name": "Vowel Engine",
-        "icon": "🔤",
-        "effect": "Placing a vowel (A/E/I/O/U) gives +1T bonus.",
-        "flavor": "Language flows through vowels.",
+    "ENCIRCLER": {
+        "name": "Encircler",
+        "icon": "🕸️",
+        "difficulty": "Hard",
+        "effect": "Moves that tighten a capture net gain +3T.",
+        "tip": "Close space around enemy cells.",
+        "flavor": "Territory is a trap before it is a capture.",
+    },
+    "BORDER_LORD": {
+        "name": "Border Lord",
+        "icon": "🏴",
+        "difficulty": "Easy",
+        "effect": "Words inside the central 6×6 battle zone gain +1T.",
+        "tip": "Control the middle; force the opponent outward.",
+        "flavor": "The center decides the frontier.",
+    },
+    "TRAP_SETTER": {
+        "name": "Trap Setter",
+        "icon": "⏳",
+        "difficulty": "Hard",
+        "effect": "After creating a capture threat, your next word gains +2T.",
+        "tip": "Build the threat one turn before the capture.",
+        "flavor": "The best capture is already visible.",
     },
     "COMEBACK_SPARK": {
         "name": "Comeback Spark",
         "icon": "🔥",
-        "effect": "When losing by 10+ cells, all role bonuses +1T extra.",
-        "flavor": "Pressure creates diamonds.",
-    },
-    "SEED_TACTICIAN": {
-        "name": "Seed Tactician",
-        "icon": "🌱",
-        "effect": "After a Seed move, your next word earns +3T bonus.",
-        "flavor": "Every setup has its reward.",
-    },
-    "PATH_SEEKER": {
-        "name": "Path Seeker",
-        "icon": "⚡",
-        "effect": "LONG PATH grants +3T instead of +1T.",
-        "flavor": "Long paths reshape the map.",
+        "difficulty": "Medium",
+        "effect": "When behind by 6+ cells, role bonuses gain extra Swing.",
+        "tip": "Use it to convert pressure into a reversal.",
+        "flavor": "Pressure creates territory.",
     },
 }
 
@@ -333,86 +362,159 @@ def pick_synergy_options() -> list[str]:
     return _r.sample(list(SYNERGY_CARDS.keys()), 3)
 
 
+def _coord_tuple(p):
+    return (getattr(p, 'row', p.get('row')), getattr(p, 'col', p.get('col'))) if not isinstance(p, tuple) else p
+
+
+def _path_touches_enemy(state: GameState, path, player: str) -> bool:
+    opponent = other_player(player)
+    if not path:
+        return False
+    for p in path:
+        r, c = _coord_tuple(p)
+        for nr, nc in get_neighbors(r, c):
+            if state.board[nr][nc].owner == opponent:
+                return True
+    return False
+
+
+def _path_in_center_zone(path) -> bool:
+    if not path:
+        return False
+    for p in path:
+        r, c = _coord_tuple(p)
+        # central 6x6 on a 7x7 board: avoid only the far outer corner pressure
+        if 0 <= r <= 5 and 0 <= c <= 5:
+            return True
+    return False
+
+
+def _capture_net_pressure(state: GameState, row: int | None, col: int | None, player: str) -> bool:
+    """Cheap proxy for 'created a capture threat': placed near ≥2 enemy cells or closes a small pocket."""
+    if row is None or col is None:
+        return False
+    opponent = other_player(player)
+    adj_enemy = 0
+    adj_empty = 0
+    for nr, nc in get_neighbors(row, col):
+        if state.board[nr][nc].owner == opponent:
+            adj_enemy += 1
+        if state.board[nr][nc].letter is None:
+            adj_empty += 1
+    return adj_enemy >= 2 or (adj_enemy >= 1 and adj_empty <= 1)
+
+
+def _synergy_preview_text(state: GameState, combos: list[str], player: str,
+                          word: str, letter: str, path=None, row: int | None = None,
+                          col: int | None = None) -> str:
+    card = state.selectedSynergy
+    if not card:
+        return ""
+    name = SYNERGY_CARDS.get(card, {}).get('name', 'Synergy')
+    if card == "BRIDGE_MASTER" and "BRIDGE" in combos:
+        return f"★ {name} ready"
+    if card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
+        return f"★ {name} ready"
+    if card in ("CUT_SPECIALIST", "CUT_HUNTER") and ("CUT" in combos or state.synergyState.get("cutPending")):
+        return f"★ {name} ready"
+    if card == "FRONTLINE_TACTICIAN" and _path_touches_enemy(state, path, player):
+        return f"★ {name} ready"
+    if card == "ENCIRCLER" and _capture_net_pressure(state, row, col, player):
+        return f"★ {name} ready"
+    if card == "BORDER_LORD" and _path_in_center_zone(path):
+        return f"★ {name} ready"
+    if card == "TRAP_SETTER" and (state.synergyState.get("trapPending") or _capture_net_pressure(state, row, col, player)):
+        return f"★ {name} ready"
+    if card == "COMEBACK_SPARK":
+        opp = other_player(player)
+        my_t = count_territory(state, player)
+        opp_t = count_territory(state, opp)
+        if (opp_t - my_t) >= 6:
+            return f"★ {name} ready"
+    # Legacy cards preserved for old saved games
+    if card == "PATH_SEEKER" and "LONG PATH" in combos:
+        return f"★ {name} ready"
+    if card == "LONG_WORD" and len(word) >= 5:
+        return f"★ {name} ready"
+    if card == "VOWEL_ENGINE" and letter.upper() in "AEIOU":
+        return f"★ {name} ready"
+    if card == "SEED_TACTICIAN" and state.synergyState.get("seedPending"):
+        return f"★ {name} ready"
+    return ""
+
+
 def apply_synergy_bonus(state: GameState, combos: list[str], player: str,
-                        word: str, letter: str) -> int:
-    """Return extra territory from the active synergy card."""
+                        word: str, letter: str, path=None,
+                        row: int | None = None, col: int | None = None) -> int:
+    """Return extra territory from the active terrain-shaped synergy card."""
     card = state.selectedSynergy
     if not card:
         return 0
-
     bonus = 0
-    opp = "BLUE" if player == "RED" else "RED"
-    my_t  = sum(1 for r in state.board for c in r if c.owner == player)
-    opp_t = sum(1 for r in state.board for c in r if c.owner == opp)
+    opp = other_player(player)
+    my_t  = count_territory(state, player)
+    opp_t = count_territory(state, opp)
 
     if card == "BRIDGE_MASTER" and "BRIDGE" in combos:
-        bonus += 2          # +2 on top of the base +3 = +5 total
-
+        bonus += 2
     elif card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
-        if not state.synergyState.get("firstLockDone"):
-            bonus += 6      # first time: +8 total (base +2, synergy +6)
-        else:
-            bonus += 1      # every time after: +3 total (base +2, synergy +1)
-
-    elif card == "CUT_HUNTER" and "CAPTURE" in combos:
-        if state.synergyState.get("cutPending"):
+        bonus += 6 if not state.synergyState.get("firstLockDone") else 1
+    elif card in ("CUT_SPECIALIST", "CUT_HUNTER"):
+        if "CUT" in combos:
             bonus += 2
-
+        elif "CAPTURE" in combos and state.synergyState.get("cutPending"):
+            bonus += 2
+    elif card == "FRONTLINE_TACTICIAN" and _path_touches_enemy(state, path, player):
+        bonus += 2
+    elif card == "ENCIRCLER" and _capture_net_pressure(state, row, col, player):
+        bonus += 3
+    elif card == "BORDER_LORD" and _path_in_center_zone(path):
+        bonus += 1
+    elif card == "TRAP_SETTER" and state.synergyState.get("trapPending"):
+        bonus += 2
+    elif card == "COMEBACK_SPARK" and (opp_t - my_t) >= 6:
+        bonus += max(1, len([c for c in combos if not str(c).startswith('SYNERGY')]))
+    # legacy cards for saved games
     elif card == "LONG_WORD":
-        wlen = len(word)
-        if wlen == 5:
-            bonus += 3
-        elif wlen >= 6:
-            bonus += 5
-
+        bonus += 3 if len(word) == 5 else 5 if len(word) >= 6 else 0
     elif card == "VOWEL_ENGINE" and letter.upper() in "AEIOU":
         bonus += 1
-
-    elif card == "COMEBACK_SPARK" and (opp_t - my_t) >= 10:
-        bonus += len(combos)  # +1 per combo when losing badly
-
-    elif card == "SEED_TACTICIAN":
-        if state.synergyState.get("seedPending"):
-            bonus += 3
-
+    elif card == "SEED_TACTICIAN" and state.synergyState.get("seedPending"):
+        bonus += 3
     elif card == "PATH_SEEKER" and "LONG PATH" in combos:
-        bonus += 2          # +2 on top of base +1 = +3 total
-
+        bonus += 2
     return bonus
-
 
 
 
 def synergy_activation_text(state: GameState, combos: list[str], player: str,
                             word: str, letter: str, bonus: int) -> str:
-    """Human-readable synergy activation message for history/flash UI."""
+    """Human-readable terrain-style synergy activation message."""
     if bonus <= 0 or not state.selectedSynergy:
         return ""
     card = state.selectedSynergy
     name = SYNERGY_CARDS.get(card, {}).get('name', 'Synergy')
     if card == 'BRIDGE_MASTER':
-        return f"{name} activated! +{bonus}T"
+        return f"{name}: connected zones +{bonus}T"
     if card == 'FORTIFIER':
-        if not state.synergyState.get('firstLockDone'):
-            return f"{name} first lock! +{bonus}T"
-        return f"{name} activated! +{bonus}T"
-    if card == 'CUT_HUNTER':
-        return f"{name} capture bonus! +{bonus}T"
-    if card == 'LONG_WORD':
-        return f"{name} activated! +{bonus}T"
-    if card == 'VOWEL_ENGINE':
-        return f"{name} activated! +{bonus}T"
+        return f"{name}: locked ground +{bonus}T"
+    if card in ('CUT_SPECIALIST', 'CUT_HUNTER'):
+        return f"{name}: enemy line split +{bonus}T"
+    if card == 'FRONTLINE_TACTICIAN':
+        return f"{name}: frontline push +{bonus}T"
+    if card == 'ENCIRCLER':
+        return f"{name}: capture net tightened +{bonus}T"
+    if card == 'BORDER_LORD':
+        return f"{name}: center held +{bonus}T"
+    if card == 'TRAP_SETTER':
+        return f"{name}: trap sprung +{bonus}T"
     if card == 'COMEBACK_SPARK':
-        return f"{name} activated! +{bonus}T"
-    if card == 'SEED_TACTICIAN':
-        return f"{name} activated! +{bonus}T"
-    if card == 'PATH_SEEKER':
-        return f"{name} activated! +{bonus}T"
+        return f"{name}: comeback pressure +{bonus}T"
     return f"{name} activated! +{bonus}T"
 
 def update_synergy_state(state: GameState, combos: list[str],
                          is_seed: bool = False) -> dict:
-    """Update synergy state machine after a move."""
+    """Update terrain-synergy state machine after a move."""
     ss = dict(state.synergyState)
     card = state.selectedSynergy
     if not card:
@@ -420,20 +522,24 @@ def update_synergy_state(state: GameState, combos: list[str],
 
     if card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
         ss["firstLockDone"] = True
-
-    elif card == "CUT_HUNTER":
+    elif card in ("CUT_SPECIALIST", "CUT_HUNTER"):
         if "CUT" in combos:
             ss["cutPending"] = True
         elif "CAPTURE" in combos and ss.get("cutPending"):
-            ss["cutPending"] = False  # consumed
-
+            ss["cutPending"] = False
+    elif card == "TRAP_SETTER":
+        # A cut/bridge/capture-looking move creates a tactical follow-up.
+        if "CUT" in combos or "BRIDGE" in combos or "CAPTURE" in combos:
+            ss["trapPending"] = True
+        elif not is_seed:
+            ss["trapPending"] = False
     elif card == "SEED_TACTICIAN":
         if is_seed:
             ss["seedPending"] = True
         else:
-            ss["seedPending"] = False  # consumed after any word
-
+            ss["seedPending"] = False
     return ss
+
 
 
 def _letter_enables_word(state: GameState, letter: str, max_check: int = 8) -> bool:
@@ -750,6 +856,8 @@ def get_letter_preview_moves(state: GameState, letter: str, limit: int = 12) -> 
                 advance_market_flag=False,
             )
             last = after.moveHistory[-1]
+            if not _is_ui_word(last.word):
+                continue
             combos = list(last.comboLabels or [])
             value = (
                 last.territoryGained * 2
@@ -769,17 +877,33 @@ def get_letter_preview_moves(state: GameState, letter: str, limit: int = 12) -> 
             elif last.territoryGained <= 2:
                 kind = "SETUP"
 
+            syn_hint = _synergy_preview_text(state, combos, player, last.word, letter,
+                                             path=last.path, row=m["row"], col=m["col"])
+            roles = [c for c in combos if not str(c).startswith("SYNERGY")]
+            if syn_hint:
+                roles.append(syn_hint)
+            tier = "safe"
+            if last.captureCount > 0 or "BRIDGE" in combos or any(str(c).startswith("SYNERGY") for c in combos) or syn_hint:
+                tier = "strong"
+            elif last.territoryGained >= 5 or "CUT" in combos:
+                tier = "frontline"
+            elif "LONG PATH" in combos or len(last.word) >= 5:
+                tier = "path"
             item = {
                 "row": m["row"],
                 "col": m["col"],
                 "letter": letter,
                 "word": last.word,
                 "territoryGain": last.territoryGained,
+                "gain": last.territoryGained,
                 "wordScore": last.wordScoreGained,
                 "lockGain": last.fortifiedCellsGained,
                 "captureCount": last.captureCount,
                 "comboLabels": combos,
+                "roles": roles,
+                "synergyPreview": syn_hint,
                 "kind": kind,
+                "tier": tier,
                 "value": value,
                 "path": [{"row": p.row, "col": p.col} for p in last.path],
             }
@@ -792,6 +916,58 @@ def get_letter_preview_moves(state: GameState, letter: str, limit: int = 12) -> 
     moves = sorted(by_cell.values(), key=lambda x: (-x["value"], -x["territoryGain"], x["word"]))
     return moves[:limit]
 
+
+
+def get_threat_preview(state: GameState, limit: int = 8) -> list[dict]:
+    """Return opponent capture threats against the current player.
+
+    This is intentionally lightweight: it simulates a small set of opponent moves
+    and returns cells/regions that may swing next turn. It powers the UI warning
+    layer without making the bot omniscient.
+    """
+    if state.winner:
+        return []
+    defender = state.currentPlayer
+    attacker = other_player(defender)
+    probe = clone_state(state)
+    probe.currentPlayer = attacker
+    try:
+        moves = _fast_bot_moves(probe, max_len=4, max_results=limit * 4, excluded=set(state.usedWords))
+    except Exception:
+        moves = []
+    threats = []
+    seen = set()
+    for m in moves:
+        try:
+            after = validate_and_apply_move(clone_state(probe), m["row"], m["col"], m["letter"], m["path"], advance_market_flag=False)
+            last = after.moveHistory[-1]
+            if last.captureCount <= 0 and "CUT" not in (last.comboLabels or []):
+                continue
+            endangered = []
+            for c in (after.lastCapturedCells or []):
+                # Captured by attacker: warn defender that this cell/area is vulnerable.
+                key = (c.row, c.col)
+                if key not in seen:
+                    seen.add(key)
+                    endangered.append({"row": c.row, "col": c.col})
+            if not endangered and last.captureCount <= 0:
+                continue
+            threats.append({
+                "row": m["row"],
+                "col": m["col"],
+                "word": last.word,
+                "territorySwing": last.territoryGained,
+                "captureCount": last.captureCount,
+                "comboLabels": last.comboLabels or [],
+                "cells": endangered,
+                "reason": f"{attacker} may swing +{last.territoryGained} with {last.word}",
+                "level": "high" if last.captureCount >= 2 or "BRIDGE" in (last.comboLabels or []) else "medium",
+            })
+            if len(threats) >= limit:
+                break
+        except Exception:
+            continue
+    return threats
 
 def get_market_stats(state: GameState) -> list[dict]:
     """Return stats for each active market letter."""
@@ -1143,7 +1319,7 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
 
     # Synergy Card bonus (Balatro-like build direction)
     base_bonus = bonus
-    synergy_bonus = apply_synergy_bonus(temp, combos, player, word, letter)
+    synergy_bonus = apply_synergy_bonus(temp, combos, player, word, letter, path=path, row=row, col=col)
     bonus_uncapped = base_bonus + synergy_bonus
 
     # ── Anti-snowball: cap bonus when player is already winning by 10+ cells ──
