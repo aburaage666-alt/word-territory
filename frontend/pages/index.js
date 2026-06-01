@@ -380,6 +380,12 @@ export default function Home() {
           try { const mk = await getMarket(d.game_id); setMarket(mk); } catch(_) {}
         }
         getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
+        // Show synergy card selection
+        getSynergyOptions(d.game_id).then(r => {
+          setSynergyOpts(r.options||[]);
+          setSynergy(r.selected||"");
+          if (!r.selected && r.options?.length > 0) setShowSynergy(true);
+        }).catch(() => {});
         return;
       } catch(e) {
         lastErr = e;
@@ -403,6 +409,12 @@ export default function Home() {
       setLetter('');
       try { const mk = await getMarket(d.game_id); setMarket(mk); } catch(_) {}
     }
+      // Show synergy card selection for daily
+      getSynergyOptions(d.game_id).then(r => {
+        setSynergyOpts(r.options||[]);
+        setSynergy(r.selected||"");
+        if (!r.selected && r.options?.length > 0) setShowSynergy(true);
+      }).catch(() => {});
     getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
   }
   useEffect(() => { boot().catch(e => setError(String(e))); }, []);
@@ -975,6 +987,15 @@ export default function Home() {
 
         {/* side panel */}
         <div className="scol">
+          {synergy && (
+            <div className="syn-active">
+              {synergyOpts.find(c=>c.key===synergy)?.icon}{' '}
+              <strong>{synergyOpts.find(c=>c.key===synergy)?.name}</strong>
+              <span className="syn-active-effect">
+                {synergyOpts.find(c=>c.key===synergy)?.effect}
+              </span>
+            </div>
+          )}
           {almost.length > 0 && (
             <div className="almost-box">
               <div className="almost-title">🀄 Almost — place one letter to make:</div>
@@ -1023,6 +1044,35 @@ export default function Home() {
       </div>
 
       {/* ── summary modal ── */}
+      {/* ── Synergy Card Selection Modal ── */}
+      {showSynergy && !synergy && (
+        <div className="modal-bg" onClick={e => e.target===e.currentTarget&&setShowSynergy(false)}>
+          <div className="modal syn-modal">
+            <h2 style={{marginBottom:6}}>🎴 Choose Your Strategy</h2>
+            <p style={{fontSize:13,color:'#888',marginBottom:20}}>Pick one card. It stays active the whole game.</p>
+            <div className="syn-cards">
+              {synergyOpts.map(card => (
+                <button key={card.key} className="syn-card"
+                  onClick={() => {
+                    selectSynergy(gameId, card.key)
+                      .then(() => { setSynergy(card.key); setShowSynergy(false); })
+                      .catch(() => { setSynergy(card.key); setShowSynergy(false); });
+                  }}
+                >
+                  <div className="syn-icon">{card.icon}</div>
+                  <div className="syn-name">{card.name}</div>
+                  <div className="syn-effect">{card.effect}</div>
+                  <div className="syn-flavor">{card.flavor}</div>
+                </button>
+              ))}
+            </div>
+            <button className="syn-skip" onClick={() => setShowSynergy(false)}>
+              Skip — play without a card
+            </button>
+          </div>
+        </div>
+      )}
+
       {showSummary&&(
         <div className="modal-bg" onClick={e=>e.target===e.currentTarget&&setSum(false)}>
           <div className="modal">
@@ -1201,6 +1251,24 @@ export default function Home() {
       .winner-banner{background:#111;color:#fff;text-align:center;padding:14px;font-size:22px;
                      font-weight:900;border-radius:12px;margin-bottom:8px;letter-spacing:1px}
       .winner-score{font-size:16px;font-weight:400;color:#aaa;margin-left:8px}
+
+      /* Synergy Card Modal */
+      .syn-modal{max-width:520px;text-align:center}
+      .syn-cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px}
+      .syn-card{background:#f8f9fa;border:2px solid #e0e0e0;border-radius:14px;padding:14px 10px;
+                cursor:pointer;transition:all .15s;text-align:center;font-family:inherit}
+      .syn-card:hover{background:#eef2ff;border-color:#6366f1;transform:translateY(-2px);
+                      box-shadow:0 4px 16px rgba(99,102,241,.15)}
+      .syn-icon{font-size:28px;margin-bottom:6px}
+      .syn-name{font-size:14px;font-weight:800;color:#111;margin-bottom:6px}
+      .syn-effect{font-size:12px;color:#444;line-height:1.4;margin-bottom:8px}
+      .syn-flavor{font-size:11px;color:#999;font-style:italic}
+      .syn-skip{background:none;border:none;color:#aaa;font-size:12px;cursor:pointer;
+                text-decoration:underline;padding:4px}
+      /* Active synergy display */
+      .syn-active{background:#f0f4ff;border:1.5px solid #c7d2fe;border-radius:10px;
+                  padding:8px 12px;margin-bottom:8px;font-size:12px;color:#3730a3}
+      .syn-active-effect{display:block;font-size:11px;color:#6366f1;margin-top:3px;font-style:italic}
 
       /* Tenpai / Almost UI */
       .almost-box{background:#fffdf0;border:1.5px solid #f0c040;border-radius:12px;padding:8px 12px;margin-bottom:8px}
