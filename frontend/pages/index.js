@@ -1,1446 +1,1536 @@
-import random
-from collections import deque
-from copy import deepcopy
+import Head from "next/head";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  botMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard,
+  getAlmost, getMarket, getSuggestions, getSynergyOptions, selectSynergy,
+  joinWaitlist, passTurn, previewMove, seedMove, submitDailyScore, submitMove,
+  useFreeLetter,
+} from "../lib/api";
+} from "../lib/api";
 
-from dictionary import get_words, is_valid_word
-from models import Cell, Coord, GameState, MoveHistoryItem, PreviewMoveResponse, Scores
+// ── helpers ──────────────────────────────────────────────────────────────────
+const asKey = (r, c) => `${r}-${c}`;
+const adj    = (a, b) => Math.abs(a.row - b.row) + Math.abs(a.col - b.col) === 1;
+// 案4: territory count is primary victory condition (Othello-style)
+const tScore = (st, p) => !st ? 0 : p === "RED"
+  ? st.scores.redTerritory
+  : st.scores.blueTerritory;
+const tScoreWord = (st, p) => !st ? 0 : p === "RED"
+  ? st.scores.redWord : st.scores.blueWord;
+const wScore = w => ({ 3:1,4:2,5:3,6:5 }[w?.length] || 0);
 
-BOARD_SIZE = 7
-MAX_TURNS = 35
+const LS_DAILY  = "wt_daily_";
+const LS_PREM   = "wt_premium";  // ③⑤ premium flag
+const LS_STREAK = "wt_streak";
 
-OPENINGS = [
-    ("STONE OPENING", ["T", "A", "O", "E", "R", "N", "S"]),
-    ("RIVER OPENING", ["R", "A", "E", "T", "L", "N", "S"]),
-    ("BRIDGE OPENING", ["B", "R", "I", "D", "G", "E", "S"]),
-    ("LIGHT OPENING", ["L", "I", "G", "H", "T", "E", "R"]),
-    ("WATER OPENING", ["W", "A", "T", "E", "R", "S", "N"]),
-    ("PLANT OPENING", ["P", "L", "A", "N", "T", "E", "R"]),
-    ("GARDEN OPENING", ["S", "E", "A", "T", "R", "N", "L"]),
-    ("FOREST OPENING", ["M", "E", "A", "T", "R", "S", "N"]),
-    ("MARKET OPENING", ["C", "A", "R", "E", "T", "N", "S"]),
-    ("CIRCLE OPENING", ["S", "T", "O", "N", "E", "R", "A"]),
-]
+const loadResult  = ds => { try { return JSON.parse(localStorage.getItem(LS_DAILY + ds) || "null"); } catch { return null; } };
+const saveResult  = (ds, r) => { try { localStorage.setItem(LS_DAILY + ds, JSON.stringify(r)); } catch {} };
+const isPremium   = () => { try { return localStorage.getItem(LS_PREM) === "true"; } catch { return false; } };
 
-# 7x7 center=(3,3): shape top(1,3), row2(2,2-5), col(3-4,3)
-OPENING_COORDS = [(1, 3), (2, 2), (2, 3), (2, 4), (2, 5), (3, 3), (4, 3)]
-
-
-
-
-def in_bounds(r: int, c: int) -> bool:
-    return 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE
-
-
-def get_neighbors(r: int, c: int):
-    for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-        nr, nc = r + dr, c + dc
-        if in_bounds(nr, nc):
-            yield nr, nc
-
-
-def other_player(player: str) -> str:
-    return "BLUE" if player == "RED" else "RED"
-
-
-def are_adjacent(a, b) -> bool:
-    return abs(a.row - b.row) + abs(a.col - b.col) == 1
-
-
-def word_score(word: str) -> int:
-    n = len(word)
-    if n == 3:
-        return 1
-    if n == 4:
-        return 2
-    if n == 5:
-        return 3
-    if n == 6:
-        return 5
-    return 0
-
-
-def clone_state(state: GameState) -> GameState:
-    return deepcopy(state)
-
-
-def total_score(state: GameState, player: str) -> float:
-    if player == "RED":
-        return state.scores.redTerritory * 1.5 + state.scores.redWord
-    return state.scores.blueTerritory * 1.5 + state.scores.blueWord
-
-
-def count_territory(state: GameState, player: str) -> int:
-    return sum(1 for row in state.board for cell in row if cell.owner == player)
-
-
-def count_locked_cells(state: GameState, player: str) -> int:
-    return sum(1 for row in state.board for cell in row if cell.owner == player and cell.fortified)
-
-
-def choose_opening():
-    candidates = OPENINGS[:]
-    random.shuffle(candidates)
-    best = candidates[0]
-    best_score = -1
-    words = get_words()
-    for name, seed in candidates:
-        available = set(seed)
-        score = sum(1 for w in words if 3 <= len(w) <= 4 and all(ch in available for ch in w))
-        if score >= 3:
-            return name, seed
-        if score > best_score:
-            best_score = score
-            best = (name, seed)
-    return best
-
-
-def build_initial_state(bot_level: str = "normal", opening_idx: int | None = None) -> GameState:
-    board = [[Cell(row=r, col=c) for c in range(BOARD_SIZE)] for r in range(BOARD_SIZE)]
-    if opening_idx is not None:
-        opening_name, seed = OPENINGS[opening_idx % len(OPENINGS)]
-    else:
-        opening_name, seed = choose_opening()
-    for (r, c), ch in zip(OPENING_COORDS, seed):
-        board[r][c].letter = ch
-    state = GameState(
-        boardSize=BOARD_SIZE,
-        board=board,
-        currentPlayer="RED",
-        turn=1,
-        usedWords=[],
-        recentMoves=[],
-        moveHistory=[],
-        scores=Scores(),
-        winner=None,
-        consecutivePasses=0,
-        vsBot=True,
-        botPlayer="BLUE",
-        botLevel=bot_level,
-        openingName=opening_name,
-        lastChangedCells=[],
-        lastCapturedCells=[],
-        lastFortifiedCells=[],
-        lastComboLabels=[],
-    )
-    # Initialize Synergy Card options (3 random cards to choose from)
-    state.synergyOptions = pick_synergy_options()
-    state.selectedSynergy = ""
-    state.synergyState = {}
-    # Initialize Letter Market
-    active, preview = generate_letter_market(state)
-    state.marketLetters  = active
-    state.previewLetters = preview
-    return state
-
-
-def board_letters_set(state: GameState) -> set[str]:
-    return {cell.letter.upper() for row in state.board for cell in row if cell.letter}
-
-
-def can_spell_from_board(word: str, available_letters: set[str]) -> bool:
-    return all(ch in available_letters for ch in word)
-
-
-def find_almost_words(state: GameState, limit: int = 5) -> list[dict]:
-    """
-    Tenpai / Almost UI: find words that are playable if ONE specific letter
-    were available — i.e., words reachable from current board + any single new tile.
-
-    Returns list of {"word": str, "needs": str, "length": int}
-    sorted by length desc (longer = more exciting).
-    """
-    words = get_words()
-    excluded = set(state.usedWords)
-    board_letters = board_letters_set(state)
-    placeable = get_placeable_empty_cells(state)
-
-    results = []
-    seen_words = set()
-
-    # For each placeable cell, try every letter A-Z
-    import string
-    for (er, ec) in placeable[:8]:  # limit cells for speed
-        for needed_letter in string.ascii_uppercase:
-            # Skip if this letter is already on the board (not "almost")
-            if needed_letter in board_letters:
-                continue
-            # Try paths from this cell with this letter
-            starts = [(er, ec)]
-            for nr, nc in get_neighbors(er, ec):
-                if state.board[nr][nc].letter:
-                    starts.append((nr, nc))
-
-            for start in starts[:3]:
-                stack = [([start], frozenset([start]))]
-                while stack:
-                    path, visited = stack.pop()
-                    plen = len(path)
-                    if plen >= 3 and (er, ec) in set(path):
-                        word = letters_from_path(state, path, (er, ec), needed_letter)
-                        if (word and word in words and word not in excluded
-                                and word not in seen_words):
-                            seen_words.add(word)
-                            results.append({
-                                "word": word,
-                                "needs": needed_letter,
-                                "length": len(word),
-                            })
-                            if len(results) >= limit * 3:
-                                # Sort and return early
-                                results.sort(key=lambda x: -x["length"])
-                                return results[:limit]
-                    if plen >= 4:
-                        continue
-                    r, c = path[-1]
-                    for nr, nc in get_neighbors(r, c):
-                        if (nr, nc) in visited:
-                            continue
-                        if (nr, nc) != (er, ec) and not state.board[nr][nc].letter:
-                            continue
-                        stack.append((path + [(nr, nc)], visited | {(nr, nc)}))
-
-    results.sort(key=lambda x: -x["length"])
-    return results[:limit]
-
-
-# Words to exclude from Suggested panel (obscure/abbreviations)
-_SUGGESTED_EXCLUDE = frozenset({
-    'HRS','HES','MAS','EST','SIM','IDES','ODES','PHI','PSI','ETA',
-    'TAO','OCA','EFT','OFT','ERE','EKE','GOB','POI','KOI','ZIT',
-    'JUT','OOH','AAH','HMM','DOIT','NARC','OTIC','ALEC',
-})
-
-
-# ── Letter Market ─────────────────────────────────────────────────────────────
-
-# English letter frequency (rough weights)
-_LETTER_WEIGHTS = {
-    'E':12,'T':9,'A':8,'O':8,'I':7,'N':7,'S':6,'H':6,'R':6,'D':4,'L':4,
-    'C':3,'U':3,'M':2,'W':2,'F':2,'G':2,'Y':2,'P':2,'B':2,'V':1,'K':1,
-    'J':1,'X':1,'Q':1,'Z':1,
-}
-_ALL_LETTERS = list(_LETTER_WEIGHTS.keys())
-_WEIGHTS     = [_LETTER_WEIGHTS[l] for l in _ALL_LETTERS]
-
-
-# ── Synergy Card Definitions ──────────────────────────────────────────────────
-
-SYNERGY_CARDS = {
-    "BRIDGE_MASTER": {
-        "name": "Bridge Master",
-        "icon": "🌉",
-        "effect": "BRIDGE grants +5T instead of +3T.",
-        "flavor": "Unite what was divided.",
-    },
-    "FORTIFIER": {
-        "name": "Fortifier",
-        "icon": "🏰",
-        "effect": "First Fortify +8T. Every Fortify after that +3T instead of +2T.",
-        "flavor": "Walls that hold, win.",
-    },
-    "CUT_HUNTER": {
-        "name": "Cut Hunter",
-        "icon": "⚔️",
-        "effect": "After CUT, your next Capture earns +2T bonus.",
-        "flavor": "Divide, then conquer.",
-    },
-    "LONG_WORD": {
-        "name": "Long Word",
-        "icon": "📖",
-        "effect": "5-letter words +3T extra. 6-letter words +5T extra.",
-        "flavor": "The longer the word, the wider the territory.",
-    },
-    "VOWEL_ENGINE": {
-        "name": "Vowel Engine",
-        "icon": "🔤",
-        "effect": "Placing a vowel (A/E/I/O/U) gives +1T bonus.",
-        "flavor": "Language flows through vowels.",
-    },
-    "COMEBACK_SPARK": {
-        "name": "Comeback Spark",
-        "icon": "🔥",
-        "effect": "When losing by 10+ cells, all role bonuses +1T extra.",
-        "flavor": "Pressure creates diamonds.",
-    },
-    "SEED_TACTICIAN": {
-        "name": "Seed Tactician",
-        "icon": "🌱",
-        "effect": "After a Seed move, your next word earns +3T bonus.",
-        "flavor": "Every setup has its reward.",
-    },
-    "POWER_SEEKER": {
-        "name": "Power Seeker",
-        "icon": "⚡",
-        "effect": "POWER WORD grants +3T instead of +1T.",
-        "flavor": "Vocabulary is territory.",
-    },
+// ── Rank system ─────────────────────────────────────────────────────────────
+function getRank(capturePct) {
+  if (capturePct >= 80) return "Territory Master";
+  if (capturePct >= 70) return "Commander";
+  if (capturePct >= 60) return "Strategist";
+  if (capturePct >= 50) return "Tactician";
+  if (capturePct >= 40) return "Defender";
+  return "Recruit";
 }
 
+function getRankEmoji(capturePct) {
+  if (capturePct >= 80) return "👑";
+  if (capturePct >= 70) return "⭐";
+  if (capturePct >= 60) return "🎯";
+  if (capturePct >= 50) return "🛡️";
+  if (capturePct >= 40) return "⚔️";
+  return "🔰";
+}
 
-def pick_synergy_options() -> list[str]:
-    """Pick 3 random synergy card keys for the player to choose from."""
-    import random as _r
-    return _r.sample(list(SYNERGY_CARDS.keys()), 3)
+// Wordle-style emoji board from final board state
+function buildEmojiBoard(board) {
+  if (!board) return "";
+  return board.map(row =>
+    row.map(cell => {
+      if (!cell.letter) return "⬜";
+      if (cell.owner === "RED") return "🟥";
+      if (cell.owner === "BLUE") return "🟦";
+      return "⬜";
+    }).join("")
+  ).join("\n");
+}
 
+function buildShare(num, ds, r) {
+  const totalCells = 49; // 7x7
+  const capturePct = Math.round((r.redScore / totalCells) * 100);
+  const rank = getRank(capturePct);
+  const rankEmoji = getRankEmoji(capturePct);
+  const result = r.winner === "RED" ? "WIN 🎉" : r.winner === null ? "DRAW 🤝" : "LOSS 😤";
+  const emojiBoard = r.emojiBoard || "";
 
-def apply_synergy_bonus(state: GameState, combos: list[str], player: str,
-                        word: str, letter: str) -> int:
-    """Return extra territory from the active synergy card."""
-    card = state.selectedSynergy
-    if not card:
-        return 0
+  return [
+    `Word Territory Daily #${num}`,
+    `${rankEmoji} ${rank} — ${capturePct}% captured`,
+    ``,
+    result + `  ·  ${r.turns} turns`,
+    r.bestMove ? `Best word: ${r.bestMove}` : null,
+    ``,
+    emojiBoard,
+    `word-territory1.onrender.com`,
+  ].filter(l => l !== null).join("\n");
+}
 
-    bonus = 0
-    opp = "BLUE" if player == "RED" else "RED"
-    my_t  = sum(1 for r in state.board for c in r if c.owner == player)
-    opp_t = sum(1 for r in state.board for c in r if c.owner == opp)
+// ── Hand generator ───────────────────────────────────────────────────────────
+// Frequencies loosely based on English letter frequency.
+// Always guarantees ≥2 vowels in a 5-card hand.
+const VOWELS     = "AAAEEEIIOOUU".split("");
+const CONSONANTS = "BBCCDDFFGGHHHJKLLMMNNPPQRRRSSSTTTVVWWXYZ".split("");
 
-    if card == "BRIDGE_MASTER" and "BRIDGE" in combos:
-        bonus += 2          # +2 on top of the base +3 = +5 total
+function randomLetter(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
-    elif card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
-        if not state.synergyState.get("firstLockDone"):
-            bonus += 6      # first time: +8 total (base +2, synergy +6)
-        else:
-            bonus += 1      # every time after: +3 total (base +2, synergy +1)
+function dealHand(size = 5) {
+  const tiles = [];
+  // Guarantee 2 vowels
+  tiles.push(randomLetter(VOWELS));
+  tiles.push(randomLetter(VOWELS));
+  // Fill rest with mix (may be vowel or consonant)
+  for (let i = 2; i < size; i++) {
+    tiles.push(Math.random() < 0.38 ? randomLetter(VOWELS) : randomLetter(CONSONANTS));
+  }
+  // Shuffle
+  for (let i = tiles.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
+  }
+  return tiles;
+}
 
-    elif card == "CUT_HUNTER" and "CAPTURE" in combos:
-        if state.synergyState.get("cutPending"):
-            bonus += 2
+function replaceCard(hand, usedLetter) {
+  // Replace the first matching tile with a new random one
+  const idx = hand.findIndex(c => c === usedLetter);
+  if (idx === -1) return [...hand.slice(1), Math.random() < 0.38 ? randomLetter(VOWELS) : randomLetter(CONSONANTS)];
+  const next = [...hand];
+  // Ensure replacement keeps vowel balance
+  const vowelCount = next.filter((c,i) => i !== idx && "AEIOU".includes(c)).length;
+  next[idx] = vowelCount < 2 ? randomLetter(VOWELS) : (Math.random() < 0.38 ? randomLetter(VOWELS) : randomLetter(CONSONANTS));
+  return next;
+}
 
-    elif card == "LONG_WORD":
-        wlen = len(word)
-        if wlen == 5:
-            bonus += 3
-        elif wlen >= 6:
-            bonus += 5
+// ── StreakTracker (③) ─────────────────────────────────────────────────────────
+function getStreak() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS_STREAK) || "{}");
+    return { count: raw.count || 0, lastDate: raw.lastDate || "" };
+  } catch { return { count: 0, lastDate: "" }; }
+}
+function updateStreak(dateStr) {
+  const prev = getStreak();
+  const yesterday = new Date(dateStr);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yStr = yesterday.toISOString().slice(0, 10);
+  const count = prev.lastDate === yStr ? prev.count + 1 : prev.lastDate === dateStr ? prev.count : 1;
+  try { localStorage.setItem(LS_STREAK, JSON.stringify({ count, lastDate: dateStr })); } catch {}
+  return count;
+}
 
-    elif card == "VOWEL_ENGINE" and letter.upper() in "AEIOU":
-        bonus += 1
+// ── Cell ──────────────────────────────────────────────────────────────────────
+function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, attack, inPath, onClick }) {
+  const cls = ["cell",
+    cell.owner === "RED" ? "cr" : cell.owner === "BLUE" ? "cb" : "",
+    cell.fortified ? "ft" : "", sel ? "sl" : "", placed ? "pl" : "",
+    legal ? "lg" : "", disabled && !sel ? "dm" : "",
+    attack ? "atk" : "",   // opponent cell that can be attacked
+    inPath ? "inpath" : "", // opponent cell currently in selected path (will be captured)
+  ].filter(Boolean).join(" ");
+  return (
+    <button className={cls} onClick={onClick} disabled={disabled}
+      data-chg={changed ? gen : null}
+      data-cap={captured ? gen : null}
+      data-lk={lockedNow ? gen : null}>
+      {cell.letter || ""}
+      {attack && !inPath && <span className="atk-dot"/>}
+    </button>
+  );
+}
 
-    elif card == "COMEBACK_SPARK" and (opp_t - my_t) >= 10:
-        bonus += len(combos)  # +1 per combo when losing badly
+// ── HistItem ──────────────────────────────────────────────────────────────────
+function HistItem({ m }) {
+  return (
+    <div className="hi">
+      <div className="hi-head"><strong>T{m.turn} {m.player}</strong><span className="hiw">{m.word}</span></div>
+      {m.moveType === "WORD" && (
+        <div className="hi-stats">+{m.territoryGained}T +{m.wordScoreGained}W 🔒{m.fortifiedCellsGained}{m.captureCount > 0 ? ` ✦${m.captureCount}cap` : ""}</div>
+      )}
+      {m.comboLabels?.length > 0 && <div className="chips">{m.comboLabels.map(x => <span key={x} className="chip combo">{x}</span>)}</div>}
+    </div>
+  );
+}
 
-    elif card == "SEED_TACTICIAN":
-        if state.synergyState.get("seedPending"):
-            bonus += 3
+// ── LeaderboardModal ③④ ───────────────────────────────────────────────────────
+function LeaderboardModal({ onClose, dailyInfo, myRank }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    getDailyLeaderboard().then(d => { setData(d); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
 
-    elif card == "POWER_SEEKER" and "POWER WORD" in combos:
-        bonus += 2          # +2 on top of base +1 = +3 total
+  return (
+    <div className="modal-bg" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <h2>🏆 Daily Leaderboard</h2>
+        {dailyInfo && <p className="muted">Day #{dailyInfo.dayNumber} · {dailyInfo.dateStr}</p>}
+        {loading && <p className="muted">Loading…</p>}
+        {!loading && !data && <p className="muted">Could not load leaderboard.</p>}
+        {data && (
+          <>
+            <p className="muted">{data.totalPlayers} player{data.totalPlayers !== 1 ? "s" : ""} today</p>
+            {myRank && <div className="my-rank">Your rank: <strong>#{myRank}</strong> of {data.totalPlayers}</div>}
+            <table className="lb-table">
+              <thead><tr><th>#</th><th>Name</th><th>Score</th><th>Result</th><th>Turns</th></tr></thead>
+              <tbody>
+                {data.entries.map(e => (
+                  <tr key={e.rank} className={myRank === e.rank ? "lb-you" : ""}>
+                    <td>{e.rank}</td>
+                    <td>{e.nickname}</td>
+                    <td><strong>{e.score}</strong></td>
+                    <td>{e.won ? "✅" : "❌"}</td>
+                    <td>{e.turns}</td>
+                  </tr>
+                ))}
+                {data.entries.length === 0 && <tr><td colSpan={5} className="muted">No scores yet today</td></tr>}
+              </tbody>
+            </table>
+          </>
+        )}
+        <div className="modal-btns"><button onClick={onClose}>Close</button></div>
+      </div>
+    </div>
+  );
+}
 
-    return bonus
+// ── PremiumModal ⑤ ─ Waitlist-first (demand validation before payment impl) ──
+const LS_WAITLIST = "wt_waitlist";
+function PremiumModal({ onClose }) {
+  const [email, setEmail] = useState("");
+  const [joined, setJoined] = useState(() => {
+    try { return !!localStorage.getItem(LS_WAITLIST); } catch { return false; }
+  });
+  const [err, setErr] = useState("");
 
+  function handleJoin() {
+    const trimmed = email.trim();
+    if (!trimmed || !trimmed.includes("@")) { setErr("Please enter a valid email."); return; }
+    try { localStorage.setItem(LS_WAITLIST, trimmed); } catch {}
+    // POST to backend — fire-and-forget (localStorage is source of truth for UX)
+    joinWaitlist(trimmed).catch(() => {});
+    setJoined(true);
+  }
 
-def update_synergy_state(state: GameState, combos: list[str],
-                         is_seed: bool = False) -> dict:
-    """Update synergy state machine after a move."""
-    ss = dict(state.synergyState)
-    card = state.selectedSynergy
-    if not card:
-        return ss
+  return (
+    <div className="modal-bg" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="prem-header">
+          <span className="prem-crown">♟</span>
+          <h2>Word Territory Premium</h2>
+          <p className="muted">Support the game · Unlock everything</p>
+        </div>
+        <div className="prem-compare">
+          <div className="prem-col">
+            <div className="prem-tier free">Free</div>
+            <ul>
+              <li>✓ Daily Challenge (1/day)</li>
+              <li>✓ Normal Bot unlimited</li>
+              <li>✓ Daily Leaderboard</li>
+              <li>✓ Move Preview</li>
+              <li className="locked-feat">✗ Strong Bot unlimited</li>
+              <li className="locked-feat">✗ Daily Streak stats</li>
+              <li className="locked-feat">✗ Puzzle Mode (coming)</li>
+              <li className="locked-feat">✗ Board themes</li>
+              <li className="locked-feat">✗ Replay mode (coming)</li>
+            </ul>
+          </div>
+          <div className="prem-col prem-highlight">
+            <div className="prem-tier premium">Premium</div>
+            <ul>
+              <li>✓ Daily Challenge (1/day)</li>
+              <li>✓ Normal Bot unlimited</li>
+              <li>✓ Daily Leaderboard</li>
+              <li>✓ Move Preview</li>
+              <li>✓ <strong>Strong Bot unlimited</strong></li>
+              <li>✓ <strong>Daily Streak + stats</strong></li>
+              <li>✓ <strong>Puzzle Mode</strong></li>
+              <li>✓ <strong>Board themes</strong></li>
+              <li>✓ <strong>Replay mode</strong></li>
+            </ul>
+            <div className="prem-price">$3.99 <span>/month</span></div>
+            <div className="prem-price-annual">or $29.99/year (save 37%)</div>
 
-    if card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
-        ss["firstLockDone"] = True
+            {/* ⑤ Waitlist — collect demand before building payment */}
+            {!joined ? (
+              <div className="waitlist-box">
+                <div className="waitlist-label">🚧 Payment coming soon</div>
+                <div className="waitlist-sub">Join the waitlist to be notified first:</div>
+                <div className="waitlist-row">
+                  <input
+                    className="waitlist-input" type="email" placeholder="your@email.com"
+                    value={email} onChange={e => { setEmail(e.target.value); setErr(""); }}
+                    onKeyDown={e => e.key === "Enter" && handleJoin()}
+                  />
+                  <button className="btn-prem-cta" onClick={handleJoin}>Join</button>
+                </div>
+                {err && <div className="waitlist-err">{err}</div>}
+              </div>
+            ) : (
+              <div className="waitlist-ok">
+                ✅ You&apos;re on the list! We&apos;ll email you when Premium launches.
+              </div>
+            )}
+          </div>
+        </div>
+        <p className="prem-note">No ads, ever. No pay-to-win, ever.<br/>Premium is cosmetic + convenience only.</p>
+        <div className="modal-btns"><button onClick={onClose}>Close</button></div>
+      </div>
+    </div>
+  );
+}
 
-    elif card == "CUT_HUNTER":
-        if "CUT" in combos:
-            ss["cutPending"] = True
-        elif "CAPTURE" in combos and ss.get("cutPending"):
-            ss["cutPending"] = False  # consumed
+// ── Main ──────────────────────────────────────────────────────────────────────
+export default function Home() {
+  const [gameId, setGameId]     = useState("");
+  const [state,  setState]      = useState(null);
+  const [path,   setPath]       = useState([]);
+  const [placed, setPlaced]     = useState(null);
+  const [letter, setLetter]     = useState("");
+  const [error,  setError]      = useState("");
+  const [suggestions, setSugg]  = useState([]);
+  const [mode,   setMode]       = useState("normal");
+  const [thinking, setThinking] = useState(false);
+  const [preview, setPreview]   = useState(null);
+  const [showSummary, setSum]   = useState(false);
+  const [copied, setCopied]     = useState(false);
 
-    elif card == "SEED_TACTICIAN":
-        if is_seed:
-            ss["seedPending"] = True
-        else:
-            ss["seedPending"] = False  # consumed after any word
+  // UI panels
+  const [showRules,   setRules]   = useState(false);
+  const [showHistory, setHistory] = useState(true);
+  const [showSuggest, setSuggest] = useState(true);
+  const [showPremium, setPremium] = useState(false);
+  const [showLB,      setShowLB]  = useState(false);  // ④
 
-    return ss
+  // Combo banner persistence
+  const [comboBanner, setCombo]   = useState([]);
+  const comboTimer = useRef(null);
+  const [animGen,  setAnimGen]    = useState(0);
 
+  // Daily ③④
+  const [dailyMode,   setDailyMode]   = useState(false);
+  const [bootMsg, setBootMsg]       = useState("Preparing your board…");
+  const [dailyInfo,   setDailyInfo]   = useState(null);
+  const [dailyResult, setDailyResult] = useState(null);
+  const [shareText,   setShareText]   = useState("");
+  const [nickname,    setNickname]    = useState("");
+  const [myRank,      setMyRank]      = useState(null);
+  const [submitted,   setSubmitted]   = useState(false);
+  const [almost,      setAlmost]      = useState([]);
+  const [market,      setMarket]      = useState({ active:[], preview:[], stats:[], freeLetterUsed:false });
+  const [freeLetter,  setFreeLetter]  = useState('');
+  const [showFreeInput, setShowFreeInput] = useState(false);
+  // Tutorial UX: track how many turns have been played
+  const tutTurns = (state?.moveHistory?.length || 0);
+  const isTutorial = tutTurns < 3;  // first 3 turns = beginner mode
+  const [streak,      setStreak]      = useState(0);
 
-def _letter_enables_word(state: GameState, letter: str, max_check: int = 8) -> bool:
-    """Quick check: does placing this letter anywhere create ≥1 valid word?"""
-    words = get_words()
-    placeable = get_placeable_empty_cells(state)
-    import random as _r
-    sample = placeable[:max_check]
-    for (er, ec) in sample:
-        # Try a fast path from each cell
-        stack = [([p], frozenset([p])) for p in [(er,ec)] +
-                 [(r,c) for r,c in get_neighbors(er,ec) if state.board[r][c].letter]]
-        while stack:
-            path, vis = stack.pop()
-            if len(path) >= 3 and (er,ec) in set(path):
-                w = letters_from_path(state, path, (er,ec), letter)
-                if w and w in words:
-                    return True
-            if len(path) >= 4:
-                continue
-            r, c = path[-1]
-            for nr, nc in get_neighbors(r, c):
-                if (nr,nc) in vis: continue
-                if (nr,nc) != (er,ec) and not state.board[nr][nc].letter: continue
-                stack.append((path+[(nr,nc)], vis|{(nr,nc)}))
-    return False
+  const summaryFired = useRef(false);
+  const letterRef   = useRef(null);
+  const histRef      = useRef(null);
 
+  // ── mount ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    getDailyInfo().then(info => {
+      setDailyInfo(info);
+      const prev = loadResult(info.dateStr);
+      if (prev) { setDailyResult(prev); setShareText(buildShare(info.dayNumber, info.dateStr, prev)); }
+    }).catch(() => {});
+    setStreak(getStreak().count);
+  }, []);
 
-def _letter_best_stats(state: GameState, letter: str) -> dict:
-    """Return {word_count, best_gain, best_word, roles} for one letter.
-    Lightweight — no simulate_move, uses path-length estimate for gain.
-    """
-    excluded = set(state.usedWords)
-    moves = _fast_bot_moves_for_letter(state, letter, max_results=8, excluded=excluded)
-    if not moves:
-        return {"wordCount": len(moves), "bestGain": 0, "bestWord": "", "roles": []}
-    best = max(moves, key=lambda m: m.get("territory_gain", 0))
-    # Quick role detection without simulate_move
-    roles = []
-    for m in moves[:3]:
-        w = m.get("word", "")
-        if len(w) >= 5 and "POWER WORD" not in roles:
-            roles.append("POWER WORD")
-    return {
-        "wordCount": len(moves),
-        "bestGain":  best.get("territory_gain", 0),
-        "bestWord":  best.get("word", ""),
-        "roles":     roles[:2],
-    }
-
-
-def _fast_bot_moves_for_letter(state: GameState, letter: str,
-                                max_results: int = 8,
-                                excluded: set | None = None) -> list[dict]:
-    """Like _fast_bot_moves but constrained to a specific letter."""
-    excluded = excluded or set()
-    words = get_words()
-    player = state.currentPlayer
-    placeable = get_placeable_empty_cells(state)
-    results = []
-
-    for (er, ec) in placeable[:6]:
-        stack = [([p], frozenset([p])) for p in [(er,ec)] +
-                 [(r,c) for r,c in get_neighbors(er,ec) if state.board[r][c].letter]]
-        while stack:
-            path, vis = stack.pop()
-            if len(path) >= 3 and (er,ec) in set(path):
-                w = letters_from_path(state, path, (er,ec), letter)
-                if w and w in words and w not in excluded:
-                    # Quick territory estimate: path length
-                    gain = len(path)
-                    results.append({"row": er, "col": ec, "letter": letter,
-                                    "path": [Coord(row=r, col=c) for r,c in path],
-                                    "word": w, "territory_gain": gain})
-                    excluded.add(w)
-                    if len(results) >= max_results:
-                        return results
-            if len(path) >= 5: continue
-            r, c = path[-1]
-            for nr, nc in get_neighbors(r, c):
-                if (nr,nc) in vis: continue
-                if (nr,nc) != (er,ec) and not state.board[nr][nc].letter: continue
-                stack.append((path+[(nr,nc)], vis|{(nr,nc)}))
-    return results
-
-
-def _score_all_letters(state: GameState) -> dict:
-    """
-    Score candidate letters for the current board state.
-    Only checks Almost-guided letters + top-weighted commons (not all 26).
-    Fast: ~5-10ms per call.
-    """
-    import heapq as _hq
-    excluded = set(state.usedWords)
-    board_letters = board_letters_set(state)
-    VOWELS = set("AEIOU")
-
-    # Candidate set: Almost letters + top 12 by frequency, minus board letters
-    try:
-        almost_letters = {a["needs"] for a in find_almost_words(state, limit=8)}
-    except Exception:
-        almost_letters = set()
-
-    top_freq = sorted(
-        [l for l in _ALL_LETTERS if l not in board_letters],
-        key=lambda l: -_LETTER_WEIGHTS[l]
-    )[:12]
-
-    candidates = list((almost_letters | set(top_freq)) - board_letters)
-    # Always include common vowels if not on board
-    for v in "AEIOU":
-        if v not in board_letters and v not in candidates:
-            candidates.append(v)
-
-    scores = {}
-    for letter in candidates:
-        moves = _fast_bot_moves_for_letter(state, letter, max_results=6, excluded=excluded)
-        best_gain = max((m.get("territory_gain", 0) for m in moves), default=0)
-        best_word = max(moves, key=lambda m: m.get("territory_gain", 0),
-                        default={}).get("word", "") if moves else ""
-        power = any(len(m.get("word","")) >= 5 for m in moves)
-        scores[letter] = {
-            "words":     len(moves),
-            "gain":      best_gain,
-            "best_word": best_word,
-            "power":     power,
-            "is_vowel":  letter in VOWELS,
+  // ── boot helpers ─────────────────────────────────────────────────────────
+  function resetMarket() {
+    setMarket({ active:[], preview:[], stats:[], freeLetterUsed:false });
+    setFreeLetter('');
+    setShowFreeInput(false);
+  }
+  function reset() {
+    setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null);
+    setSum(false); setCopied(false); setShareText(""); setNickname(""); setMyRank(null);
+    setSubmitted(false); summaryFired.current = false;
+  }
+  async function boot(m = mode) {
+    let lastErr;
+    for (let attempt = 1; attempt <= 9; attempt++) {
+      try {
+        const d = await createGame({ botLevel: m });
+        setGameId(d.game_id); setState(d.state); setDailyMode(false);
+        reset(); setAnimGen(0); setBootMsg("");
+        if (d.state?.marketLetters?.length > 0) {
+          setMarket({ active: d.state.marketLetters, preview: d.state.previewLetters||[],
+            stats: d.state.marketLetters.map(l=>({letter:l,wordCount:0,bestGain:0,bestWord:'',roles:[]})),
+            freeLetterUsed: !!d.state.freeLetterUsed });
+          setLetter('');
+          // Fetch stats non-blocking — failure must NOT trigger game retry
+          try { const mk = await getMarket(d.game_id); setMarket(mk); } catch(_) {}
         }
-    return scores
+        getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
+        // Show synergy card selection
+        getSynergyOptions(d.game_id).then(r => {
+          setSynergyOpts(r.options||[]);
+          setSynergy(r.selected||"");
+          if (!r.selected && r.options?.length > 0) setShowSynergy(true);
+        }).catch(() => {});
+        return;
+      } catch(e) {
+        lastErr = e;
+        if (attempt < 6) {
+          setBootMsg(`Almost ready… (${attempt * 10}s)`);
+          await new Promise(r => setTimeout(r, 10000));
+        }
+      }
+    }
+    setBootMsg("Could not connect. Please refresh.");
+  }
+  async function bootDaily() {
+    if (!dailyInfo) return;
+    const d = await createDailyGame();
+    setGameId(d.game_id); setState(d.state); setDailyMode(true);
+    reset(); setAnimGen(0);
+    if (d.state?.marketLetters?.length > 0) {
+      setMarket({ active: d.state.marketLetters, preview: d.state.previewLetters||[],
+        stats: d.state.marketLetters.map(l=>({letter:l,wordCount:0,bestGain:0,bestWord:'',roles:[]})),
+        freeLetterUsed: !!d.state.freeLetterUsed });
+      setLetter('');
+      try { const mk = await getMarket(d.game_id); setMarket(mk); } catch(_) {}
+    }
+      // Show synergy card selection for daily
+      getSynergyOptions(d.game_id).then(r => {
+        setSynergyOpts(r.options||[]);
+        setSynergy(r.selected||"");
+        if (!r.selected && r.options?.length > 0) setShowSynergy(true);
+      }).catch(() => {});
+    getSuggestions(d.game_id).then(setSugg).catch(() => setSugg([]));
+  }
+  useEffect(() => { boot().catch(e => setError(String(e))); }, []);
 
+  // ── state tick ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!state) return;
+    setAnimGen(g => g + 1);
+    const c = state.lastComboLabels || [];
+    if (c.length > 0) {
+      setCombo(c);
+      if (comboTimer.current) clearTimeout(comboTimer.current);
+      comboTimer.current = setTimeout(() => setCombo([]), 3500);
+    }
+  }, [state?.turn]);
 
-def generate_letter_market(state: GameState) -> tuple[list[str], list[str]]:
-    """
-    3-slot Letter Market:
-    - Slot 0 SAFE:  highest wordCount (reliable play)
-    - Slot 1 POWER: highest territory gain / role potential
-    - Slot 2 SETUP: Almost-guided or frequency-weighted
+  // ── bot auto-move ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!state || !gameId) return;
+    if (state.winner !== undefined && state.winner !== "") return;  // any winner incl. DRAW
+    if (state.currentPlayer !== state.botPlayer) return;
+    let cancelled = false;
+    const run = async () => {
+      setThinking(true);
+      try {
+        await new Promise(r => setTimeout(r, 350));
+        const next = await botMove(gameId);
+        if (cancelled) return;
+        setState(next);
+        // Market stable during bot turns (bot not market-constrained)
+        reset();
+        try { setSugg(await getSuggestions(gameId)); } catch(_) {}
+      } catch(e) {
+        if (!cancelled) setError(e.message || "Bot failed");
+      }
+      if (!cancelled) setThinking(false);
+    };
+    run();
+    return () => { cancelled = true; setThinking(false); };
+  }, [state?.turn, state?.currentPlayer]);
 
-    Guarantees: ≥2 of 3 active letters have playable words.
-    Preview: no duplicates, ≥1 vowel, no repeat from active.
-    """
-    import random as _r
+  // ── game over ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!state) return;
+    if (state.winner === undefined || state.winner === "") return;  // not yet set
+    if (summaryFired.current) return;
+    summaryFired.current = true;
+    setSum(true);
 
-    RARE  = {'Q','X','Z','J'}
-    VOWELS = set("AEIOU")
-    board_letters = board_letters_set(state)
+    if (dailyMode && dailyInfo) {
+      const wm = state.moveHistory.filter(m => m.moveType === "WORD");
+      const best = [...wm].sort((a, b) =>
+        (b.territoryGained*2 + b.wordScoreGained*1.5 + b.fortifiedCellsGained*2 + (b.captureCount?5:0)) -
+        (a.territoryGained*2 + a.wordScoreGained*1.5 + a.fortifiedCellsGained*2 + (a.captureCount?5:0))
+      )[0];
+      const totalCells = 7 * 7;
+      const redCells = tScore(state, "RED");
+      const capturePct = Math.round((redCells / totalCells) * 100);
+      const r = {
+        redScore: redCells, blueScore: tScore(state, "BLUE"),
+        winner: state.winner, turns: state.turn - 1,
+        bestMove: best ? `${best.word} (+${best.territoryGained}T)` : null,
+        openingName: state.openingName,
+        capturePct,
+        emojiBoard: buildEmojiBoard(state.board),
+      };
+      saveResult(dailyInfo.dateStr, r);
+      setDailyResult(r);
+      setShareText(buildShare(dailyInfo.dayNumber, dailyInfo.dateStr, r));
+      const s = updateStreak(dailyInfo.dateStr); setStreak(s);
 
-    scores = _score_all_letters(state)
-    playable = {l: s for l, s in scores.items() if s["words"] > 0}
+      // ④ Auto-submit score anonymously; player can re-submit with nickname from modal
+      submitDailyScore({
+        nickname: "Anonymous",
+        redScore: r.redScore,
+        blueScore: r.blueScore,
+        won: r.winner === "RED",
+        turns: r.turns,
+      }).then(res => {
+        setMyRank(res.rank);
+      }).catch(() => {});
+    }
+  }, [state?.winner]);
 
-    def pick(pool_dict, key_fn, exclude):
-        candidates = [(l, s) for l, s in pool_dict.items() if l not in exclude]
-        if not candidates:
-            return None
-        return max(candidates, key=lambda x: key_fn(x[1]))[0]
+  useEffect(() => { if (histRef.current) histRef.current.scrollTop = histRef.current.scrollHeight; }, [state?.moveHistory?.length]);
 
-    def weighted_pick(exclude):
-        pool = [l for l in _ALL_LETTERS
-                if l not in board_letters and l not in RARE and l not in exclude]
-        if not pool:
-            pool = [l for l in _ALL_LETTERS if l not in exclude] or _ALL_LETTERS
-        weights = [_LETTER_WEIGHTS[l] for l in pool]
-        return _r.choices(pool, weights=weights)[0]
+  // ── preview ──────────────────────────────────────────────────────────────
+  const currentWord = useMemo(() => {
+    if (!state) return "";
+    return path.map(p => {
+      if (placed && placed.row === p.row && placed.col === p.col) return letter || "";
+      return state.board[p.row][p.col].letter || "";
+    }).join("");
+  }, [state, path, placed, letter]);
 
-    used = set()
-    active = []
+  useEffect(() => {
+    if (!gameId || !placed || !letter || path.length === 0) { setPreview(null); return; }
+    const h = setTimeout(async () => {
+      try { setPreview(await previewMove(gameId, { row: placed.row, col: placed.col, letter, path })); }
+      catch { setPreview(null); }
+    }, 180);
+    return () => clearTimeout(h);
+  }, [gameId, placed, letter, JSON.stringify(path)]);
 
-    # Slot 0: SAFE — most playable words
-    safe = pick(playable, lambda s: s["words"] * 2 + s["gain"], used)
-    if safe:
-        active.append(safe); used.add(safe)
+  // Auto-focus letter input when cell is placed
+  useEffect(() => {
+    if (placed && letterRef.current) letterRef.current.focus();
+  }, [placed]);
 
-    # Slot 1: POWER — highest gain, prefer Power Word / different from safe
-    power = pick(playable, lambda s: s["gain"] * 3 + (4 if s["power"] else 0) + s["words"], used)
-    if power:
-        active.append(power); used.add(power)
-    elif playable:
-        # second-best playable
-        p2 = pick(playable, lambda s: s["gain"] + s["words"], used)
-        if p2:
-            active.append(p2); used.add(p2)
+  // ── board helpers ────────────────────────────────────────────────────────
+  const human = () => state && !thinking && !state.winner && state.winner !== null && state.currentPlayer !== state.botPlayer;
+  const isSel = (r,c) => path.some(p => p.row===r && p.col===c);
 
-    # Slot 2: SETUP — Almost-guided (future value)
-    try:
-        almost = find_almost_words(state, limit=10)
-        setup_candidates = [a["needs"] for a in almost
-                            if a["needs"] not in board_letters and a["needs"] not in used]
-        if setup_candidates:
-            setup = setup_candidates[0]
-            active.append(setup); used.add(setup)
-    except Exception:
-        pass
+  // Opponent cells adjacent to any placeable empty cell = attackable
+  const opponent = state?.currentPlayer === "RED" ? "BLUE" : "RED";
+  const attackableSet = useMemo(() => {
+    if (!state || !human()) return new Set();
+    const s = new Set();
+    const BS = state.board.length;
+    for (let r = 0; r < BS; r++) {
+      for (let c = 0; c < BS; c++) {
+        const cell = state.board[r][c];
+        if (cell.letter && cell.owner === opponent && !cell.fortified) {
+          for (const [nr, nc] of [[r-1,c],[r+1,c],[r,c-1],[r,c+1]]) {
+            if (nr>=0&&nr<BS&&nc>=0&&nc<BS&&!state.board[nr][nc].letter) {
+              s.add(asKey(r,c));
+              break;
+            }
+          }
+        }
+      }
+    }
+    return s;
+  }, [state?.turn, state?.currentPlayer]);
 
-    # Fill any remaining slots
-    while len(active) < 3:
-        l = weighted_pick(used)
-        active.append(l); used.add(l)
+  // Opponent cells currently in the selected path (will be captured if submitted)
+  const inPathOpponentSet = useMemo(() => {
+    if (!path.length) return new Set();
+    const s = new Set();
+    path.forEach(p => {
+      const cell = state?.board[p.row][p.col];
+      if (cell?.owner === opponent) s.add(asKey(p.row, p.col));
+    });
+    return s;
+  }, [path, state?.turn]);
+  const hasNbr = (r,c) => {
+    const b = state.board;
+    const BS = b.length - 1;  // dynamic board size (6 for 7x7)
+    return (r>0&&b[r-1][c].letter)||(r<BS&&b[r+1][c].letter)||(c>0&&b[r][c-1].letter)||(c<BS&&b[r][c+1].letter);
+  };
+  const isLegal = (r,c) => state && !state.board[r][c].letter && hasNbr(r,c);
+  const isDim = (r,c) => {
+    if (!state || !human()) return true;
+    const cell = state.board[r][c];
+    // Already selected cells are not dim but not clickable again
+    if (isSel(r,c)) return false;
+    // Phase 0: nothing selected yet
+    if (path.length === 0) {
+      // Can start from a green cell (will become placed) OR existing letter
+      return !isLegal(r,c) && !cell.letter;
+    }
+    // Must be adjacent to last cell in path
+    const last = path[path.length - 1];
+    if (!adj(last, {row:r, col:c})) return true;
+    // Can select: existing letter OR the green placed cell
+    if (cell.letter) return false;
+    if (isLegal(r,c) && !placed) return false; // green cell not yet set as placed
+    if (placed && placed.row===r && placed.col===c) return false;
+    return true;
+  };
 
-    # Ensure at least 1 vowel in active 3
-    if not any(l in VOWELS for l in active):
-        # replace the weakest (last slot) with a vowel
-        vowels_avail = [l for l in VOWELS if l not in board_letters and l not in used]
-        if vowels_avail:
-            active[-1] = _r.choice(vowels_avail)
-            used = set(active)
+  function clickCell(r,c) {
+    if (!state || !human()) return;
+    const cell = state.board[r][c];
 
-    # Preview: no duplicates, no same as active, ≥1 vowel
-    preview = []
-    prev_seen = set(active)
-    # Add 1 Almost letter for preview
-    try:
-        almost = find_almost_words(state, limit=6)
-        for a in almost:
-            l = a["needs"]
-            if l not in board_letters and l not in prev_seen:
-                preview.append(l); prev_seen.add(l); break
-    except Exception:
-        pass
-    while len(preview) < 3:
-        l = weighted_pick(prev_seen)
-        preview.append(l); prev_seen.add(l)
-    # Ensure ≥1 vowel in preview
-    if not any(l in VOWELS for l in preview):
-        vowels_avail = [l for l in VOWELS if l not in board_letters and l not in prev_seen - set(preview)]
-        if vowels_avail:
-            preview[-1] = _r.choice(vowels_avail)
-
-    return active[:3], preview[:3]
-
-
-def advance_market(state: GameState, used_letter: str) -> tuple[list[str], list[str]]:
-    """
-    Remove used_letter from active, pull from preview, replenish.
-    Always returns 3 active + 3 preview letters.
-    """
-    import random as _r
-    RARE = {"Q","X","Z","J"}
-    board_letters = board_letters_set(state)
-
-    # Step 1: Remove used letter from active
-    active = [l for l in state.marketLetters if l != used_letter]
-
-    # Step 2: Pull from preview to fill active to 3
-    preview = list(state.previewLetters) if state.previewLetters else []
-    while len(active) < 3 and preview:
-        active.append(preview.pop(0))
-
-    # Step 3: If still short, use scored letters
-    existing = set(active) | set(preview)
-    if len(active) < 3:
-        try:
-            scores = _score_all_letters(state)
-            ranked = sorted(
-                [(l, s) for l, s in scores.items()
-                 if s["words"] > 0 and l not in existing],
-                key=lambda x: -(x[1]["gain"] + x[1]["words"])
-            )
-            for l, _ in ranked:
-                if len(active) >= 3: break
-                active.append(l); existing.add(l)
-        except Exception:
-            pass
-        while len(active) < 3:
-            pool = [l for l in _ALL_LETTERS if l not in RARE and l not in existing]
-            if not pool: pool = [l for l in _ALL_LETTERS if l not in existing] or list(_ALL_LETTERS)
-            l = _r.choices(pool, weights=[_LETTER_WEIGHTS[l] for l in pool])[0]
-            active.append(l); existing.add(l)
-
-    # Step 4: Refill preview to 3 using Almost guidance
-    try:
-        almost = find_almost_words(state, limit=6)
-        good = [a["needs"] for a in almost
-                if a["needs"] not in board_letters and a["needs"] not in existing]
-        _r.shuffle(good)
-    except Exception:
-        good = []
-    for l in good:
-        if len(preview) >= 3: break
-        preview.append(l); existing.add(l)
-    while len(preview) < 3:
-        pool = [l for l in _ALL_LETTERS if l not in RARE and l not in existing]
-        if not pool: pool = [l for l in _ALL_LETTERS if l not in RARE]
-        l = _r.choices(pool, weights=[_LETTER_WEIGHTS[l] for l in pool])[0]
-        preview.append(l); existing.add(l)
-
-    return active[:3], preview[:3]
-
-
-
-def get_market_stats(state: GameState) -> list[dict]:
-    """Return stats for each active market letter."""
-    stats = []
-    for letter in state.marketLetters:
-        s = _letter_best_stats(state, letter)
-        s["letter"] = letter
-        stats.append(s)
-    return stats
-
-
-def find_candidate_words(state: GameState, limit: int = 15) -> list[str]:
-    """Return PLAYABLE words for Suggested — filtered for common words."""
-    excluded = set(state.usedWords)
-    moves = _fast_bot_moves(state, max_len=4, max_results=limit * 2, excluded=excluded)
-    seen = set()
-    result = []
-    for m in moves:
-        w = m["word"]
-        if w in seen or w in _SUGGESTED_EXCLUDE:
-            continue
-        seen.add(w)
-        result.append(w)
-        if len(result) >= limit:
-            break
-    return result
-
-def snapshot(state: GameState):
-    owners = {(cell.row, cell.col): cell.owner for row in state.board for cell in row}
-    locked = {(cell.row, cell.col): cell.fortified for row in state.board for cell in row}
-    red_total = total_score(state, "RED")
-    blue_total = total_score(state, "BLUE")
-    leader = "RED" if red_total > blue_total else "BLUE" if blue_total > red_total else "TIE"
-    return owners, locked, red_total, blue_total, leader
-
-
-def diff_cells(before_state: GameState, after_state: GameState, player: str):
-    before_owner, before_locked, before_red, before_blue, before_leader = snapshot(before_state)
-    after_owner, after_locked, after_red, after_blue, after_leader = snapshot(after_state)
-
-    changed = []
-    captured = []
-    newly_locked = []
-    territory_gain = 0
-    capture_count = 0
-
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            before = before_owner[(r, c)]
-            after = after_owner[(r, c)]
-            if before != after:
-                changed.append(Coord(row=r, col=c))
-            if before != player and after == player:
-                territory_gain += 1
-                if before is not None and before != player:
-                    captured.append(Coord(row=r, col=c))
-                    capture_count += 1
-            if not before_locked[(r, c)] and after_locked[(r, c)] and after == player:
-                newly_locked.append(Coord(row=r, col=c))
-
-    return {
-        "changed": changed,
-        "captured": captured,
-        "newly_locked": newly_locked,
-        "territory_gain": territory_gain,
-        "capture_count": capture_count,
-        "leader_changed": before_leader != after_leader and before_leader != "TIE" and after_leader != "TIE",
-        "red_total": after_red,
-        "blue_total": after_blue,
+    // Deselect last cell if tapping it again (undo last step)
+    if (path.length > 0 && path[path.length-1].row===r && path[path.length-1].col===c) {
+      const newPath = path.slice(0, -1);
+      setPath(newPath);
+      // If we removed the placed cell from path, unset placed
+      if (placed && placed.row===r && placed.col===c) {
+        setPlaced(null);
+      }
+      return;
     }
 
-
-def _count_connected_regions(state, player: str) -> int:
-    """Count how many disconnected regions player owns (for BRIDGE/CUT detection)."""
-    visited = set()
-    regions = 0
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            if state.board[r][c].owner == player and (r, c) not in visited:
-                regions += 1
-                stack = [(r, c)]
-                while stack:
-                    cr, cc = stack.pop()
-                    if (cr, cc) in visited:
-                        continue
-                    visited.add((cr, cc))
-                    for nr, nc in get_neighbors(cr, cc):
-                        if state.board[nr][nc].owner == player and (nr, nc) not in visited:
-                            stack.append((nr, nc))
-    return regions
-
-
-def find_cross_words(state, row: int, col: int, letter: str) -> list[str]:
-    """Find all valid words formed by placing letter at (row,col) in any direction."""
-    found = []
-    words = get_words()
-    # Check all 4 directions: right, down, left, up
-    for dr, dc in [(0,1),(1,0),(0,-1),(-1,0)]:
-        # Walk to start of potential word in opposite direction
-        r, c = row - dr, col - dc
-        while in_bounds(r,c) and state.board[r][c].letter:
-            r -= dr; c -= dc
-        r += dr; c += dc
-        # Read the word in this direction
-        chars = []
-        rr, cc = r, c
-        while in_bounds(rr, cc) and (state.board[rr][cc].letter or (rr==row and cc==col)):
-            chars.append(letter if (rr==row and cc==col) else state.board[rr][cc].letter)
-            rr += dr; cc += dc
-        word_str = "".join(chars).upper()
-        if len(word_str) >= 3 and word_str in words and word_str not in found:
-            found.append(word_str)
-    return found
-
-
-def combo_labels(word: str, territory_gain: int, lock_gain: int,
-                 capture_count: int, leader_changed: bool,
-                 before_state=None, after_state=None, player: str = "RED",
-                 cross_words: list | None = None,
-                 row: int = -1, col: int = -1) -> list[str]:
-    labels = []
-
-    # ── Power moves ───────────────────────────────────────────────────────────
-    if len(word) >= 5:
-        labels.append("POWER WORD")
-    if territory_gain >= 6:
-        labels.append("MEGA TERRITORY")
-    if lock_gain >= 3:
-        labels.append("FORTIFY CHAIN")
-    if capture_count >= 1:
-        labels.append("CAPTURE")
-    if capture_count >= 2:
-        labels.append("DOUBLE CAPTURE")
-    if leader_changed:
-        labels.append("SWING MOVE")
-
-    # ── Cross Word Bonus (もじぴったん的連鎖) ─────────────────────────────────
-    if cross_words and len(cross_words) >= 2:
-        labels.append("CROSS WORD")    # 1手で2語以上 +2T
-
-    # ── Early Yaku (序盤でも出る役) ──────────────────────────────────────────
-    if before_state and after_state:
-        opponent = "BLUE" if player == "RED" else "RED"
-        before_my_t  = sum(1 for r in before_state.board for c in r if c.owner == player)
-        after_my_t   = sum(1 for r in after_state.board  for c in r if c.owner == player)
-        before_opp_t = sum(1 for r in before_state.board for c in r if c.owner == opponent)
-        after_opp_t  = sum(1 for r in after_state.board  for c in r if c.owner == opponent)
-
-        # FIRST CAPTURE — first time taking opponent's cell this game
-        before_hist = [m for m in before_state.moveHistory if "CAPTURE" in (m.comboLabels or [])]
-        if capture_count >= 1 and not before_hist:
-            labels.append("FIRST CAPTURE")
-
-        # EDGE REACH — player reaches the board edge for the first time
-        edge_before = any(
-            before_state.board[r][c].owner == player
-            for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)
-            if r in (0, BOARD_SIZE-1) or c in (0, BOARD_SIZE-1)
-        )
-        edge_after = any(
-            after_state.board[r][c].owner == player
-            for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)
-            if r in (0, BOARD_SIZE-1) or c in (0, BOARD_SIZE-1)
-        )
-        if not edge_before and edge_after:
-            labels.append("EDGE REACH")
-
-        # LINK only fires if BRIDGE didn't (BRIDGE is the stronger version)
-        # Both are checked via region counting — skip standalone LINK to reduce spam
-
-        # COMEBACK — player was behind, now leads or closes gap significantly
-        before_leader = "RED" if before_state.scores.redTerritory > before_state.scores.blueTerritory else "BLUE"
-        if before_leader != player and leader_changed:
-            labels.append("COMEBACK")
-
-        # BRIDGE and CUT
-        before_regions = _count_connected_regions(before_state, player)
-        after_regions  = _count_connected_regions(after_state, player)
-        if before_regions > 1 and after_regions < before_regions:
-            labels.append("BRIDGE")
-        before_opp_r = _count_connected_regions(before_state, opponent)
-        after_opp_r  = _count_connected_regions(after_state, opponent)
-        if after_opp_r > before_opp_r:
-            labels.append("CUT")
-
-    return labels
-
-
-def apply_locks(state: GameState):
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            cell = state.board[r][c]
-            if cell.owner is None:
-                cell.fortified = False
-                continue
-            owner = cell.owner
-            all_same = True
-            for nr, nc in get_neighbors(r, c):
-                if state.board[nr][nc].owner != owner:
-                    all_same = False
-                    break
-            if r in (0, BOARD_SIZE - 1) or c in (0, BOARD_SIZE - 1):
-                all_same = False
-            cell.fortified = all_same
-
-
-def apply_captures(state: GameState, player: str):
-    visited = set()
-    for r in range(BOARD_SIZE):
-        for c in range(BOARD_SIZE):
-            if (r, c) in visited or state.board[r][c].owner == player:
-                continue
-            region = []
-            queue = deque([(r, c)])
-            touches_edge = False
-            while queue:
-                cr, cc = queue.popleft()
-                if (cr, cc) in visited:
-                    continue
-                visited.add((cr, cc))
-                current = state.board[cr][cc]
-                if current.owner == player:
-                    continue
-                region.append((cr, cc))
-                if cr in (0, BOARD_SIZE - 1) or cc in (0, BOARD_SIZE - 1):
-                    touches_edge = True
-                for nr, nc in get_neighbors(cr, cc):
-                    if (nr, nc) not in visited and state.board[nr][nc].owner != player:
-                        queue.append((nr, nc))
-            if not touches_edge:
-                for rr, cc in region:
-                    target = state.board[rr][cc]
-                    # 案4: locked cells can be captured when surrounded
-                    target.owner = player
-
-
-def recalc_scores(state: GameState, current_player_for_word_score: str | None = None, last_word: str | None = None):
-    state.scores.redTerritory = count_territory(state, "RED")
-    state.scores.blueTerritory = count_territory(state, "BLUE")
-    if last_word and current_player_for_word_score:
-        score = word_score(last_word)
-        if current_player_for_word_score == "RED":
-            state.scores.redWord += score
-        else:
-            state.scores.blueWord += score
-
-
-def path_contains(path, row: int, col: int) -> bool:
-    return any(p.row == row and p.col == col for p in path)
-
-
-def validate_path_and_word(state: GameState, row: int, col: int, letter: str, path):
-    if not path_contains(path, row, col):
-        raise ValueError("Your placed letter must be part of the word path.")
-    seen = set()
-    chars = []
-    for i, p in enumerate(path):
-        if not in_bounds(p.row, p.col):
-            raise ValueError("Path out of bounds")
-        key = (p.row, p.col)
-        if key in seen:
-            raise ValueError("You cannot use the same cell twice in a path.")
-        seen.add(key)
-        if i > 0 and not are_adjacent(path[i - 1], p):
-            raise ValueError("Cells must be directly connected — no diagonals.")
-        cell = state.board[p.row][p.col]
-        if p.row == row and p.col == col:
-            chars.append(letter.upper())
-        elif cell.letter is not None:
-            chars.append(cell.letter.upper())
-        else:
-            raise ValueError("All non-placed path cells must contain letters")
-    return "".join(chars).upper()
-
-
-def recent_duplicate_blocked(state: GameState, word: str) -> bool:
-    """Block any word already used in this game (not just the last few moves).
-    Previous behaviour only blocked the last 3 moves, allowing the same word
-    to cycle back every 4 turns. usedWords tracks the full game history.
-    """
-    return word.upper() in {w.upper() for w in state.usedWords}
-
-
-def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, path, advance_market_flag: bool = False):
-    if state.winner:
-        raise ValueError("Game already finished")
-    if not in_bounds(row, col):
-        raise ValueError("Out of bounds")
-    if state.board[row][col].letter is not None:
-        raise ValueError("Cell already occupied")
-    if not letter or not letter.isalpha() or len(letter) != 1:
-        raise ValueError("Letter must be one alphabet character")
-    if not any(state.board[nr][nc].letter for nr, nc in get_neighbors(row, col)):
-        raise ValueError("Place your letter next to an existing letter on the board.")
-
-    word = validate_path_and_word(state, row, col, letter, path)
-    if len(word) < 3 or len(word) > 6:
-        raise ValueError(f"Need 3–6 letters. '{word}' has {len(word)}.")
-    if recent_duplicate_blocked(state, word):
-        raise ValueError(f"You already played {word} this game. Try another word.")
-    if not is_valid_word(word):
-        raise ValueError(f"'{word}' is not in the dictionary. Try a common English word.")
-    player = state.currentPlayer
-
-    before = clone_state(state)
-    temp = deepcopy(state)
-    temp.board[row][col].letter = letter.upper()
-    # 3-letter words: cap territory to 2 cells to prevent short-word spam
-    max_cells = 2 if len(word) == 3 else len(path)
-    cells_claimed = 0
-    for p in path:
-        cell = temp.board[p.row][p.col]
-        if cell.owner != player:
-            if cells_claimed >= max_cells:
-                continue
-            cells_claimed += 1
-        cell.owner = player
-    apply_captures(temp, player)
-    apply_locks(temp)
-    recalc_scores(temp, current_player_for_word_score=player, last_word=word)
-
-    delta = diff_cells(before, temp, player)
-
-    # Detect cross words formed by this placement
-    cross_words_formed = find_cross_words(before, row, col, letter)
-    combos = combo_labels(
-        word, delta["territory_gain"], len(delta["newly_locked"]),
-        delta["capture_count"], delta["leader_changed"],
-        before_state=before, after_state=temp, player=player,
-        cross_words=cross_words_formed, row=row, col=col,
-    )
-
-
-    # ── Role bonus: award extra territory for strategic combos ───────────────
-    bonus = 0
-    # Power moves (中盤〜終盤)
-    if "BRIDGE" in combos:        bonus += 3
-    if "CUT" in combos:           bonus += 2
-    if "FORTIFY CHAIN" in combos: bonus += 2
-    if "DOUBLE CAPTURE" in combos:bonus += 1
-    if "POWER WORD" in combos:    bonus += 1
-    if "MEGA TERRITORY" in combos:bonus += 1
-    # Cross Word (もじぴったん的連鎖)
-    if "CROSS WORD" in combos:    bonus += 2
-    # Early Yaku (序盤でも出る役)
-    if "FIRST CAPTURE" in combos: bonus += 1
-    if "EDGE REACH" in combos:    bonus += 1
-    if "COMEBACK" in combos:      bonus += 2
-
-    # ── Anti-snowball: cap bonus when player is already winning by 10+ cells ──
-    if bonus > 0 and temp.scores:
-        my_t   = temp.scores.redTerritory if player == "RED" else temp.scores.blueTerritory
-        opp_t  = temp.scores.blueTerritory if player == "RED" else temp.scores.redTerritory
-        lead   = my_t - opp_t
-        if lead >= 15:
-            bonus = min(bonus, 1)   # hard cap at 1 when crushing
-        elif lead >= 10:
-            bonus = min(bonus, 2)   # soft cap at 2 when comfortably ahead
-    if bonus > 0:
-        # Convert nearest unfortified non-player cells to player (bonus territory)
-        import random as _r
-        candidates = [
-            (r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)
-            if temp.board[r][c].letter and temp.board[r][c].owner != player
-            and not temp.board[r][c].fortified
-        ]
-        _r.shuffle(candidates)
-        for r, c in candidates[:bonus]:
-            temp.board[r][c].owner = player
-        if candidates[:bonus]:
-            apply_locks(temp)
-            recalc_scores(temp)
-            delta["territory_gain"] += min(bonus, len(candidates))
-
-    item = MoveHistoryItem(
-        turn=state.turn,
-        player=player,
-        word=word,
-        moveType="WORD",
-        placedRow=row,
-        placedCol=col,
-        placedLetter=letter.upper(),
-        path=[Coord(row=p.row, col=p.col) for p in path],
-        wordScoreGained=word_score(word),
-        territoryGained=delta["territory_gain"],
-        fortifiedCellsGained=len(delta["newly_locked"]),
-        captureCount=delta["capture_count"],
-        comboLabels=combos,
-        redTotalAfter=delta["red_total"],
-        blueTotalAfter=delta["blue_total"],
-    )
-
-
-    temp.usedWords.append(word)
-    temp.moveHistory.append(item)
-    combo_suffix = f" [{' | '.join(combos)}]" if combos else ""
-    temp.recentMoves = [f"{player}: {word}{combo_suffix}"] + temp.recentMoves[:4]
-    temp.lastChangedCells = delta["changed"]
-    temp.lastCapturedCells = delta["captured"]
-    temp.lastFortifiedCells = delta["newly_locked"]
-    temp.lastComboLabels = combos
-    temp.currentPlayer = other_player(player)
-    temp.turn += 1
-    temp.consecutivePasses = 0
-
-    if is_game_over(temp):
-        temp.winner = decide_winner(temp)
-
-    # Advance Letter Market — only for human player moves (flag=True)
-    if advance_market_flag and temp.marketLetters:
-        new_active, new_preview = advance_market(temp, letter)
-        temp.marketLetters  = new_active
-        temp.previewLetters = new_preview
-    return temp
-
-
-def apply_seed_move(state: GameState, row: int, col: int, letter: str, advance_market_flag: bool = False):
-    if state.winner:
-        raise ValueError("Game already finished")
-    if not in_bounds(row, col) or state.board[row][col].letter is not None:
-        raise ValueError("Seed move requires an empty cell")
-    if not letter or not letter.isalpha() or len(letter) != 1:
-        raise ValueError("Letter must be one alphabet character")
-    if not any(state.board[nr][nc].letter for nr, nc in get_neighbors(row, col)):
-        raise ValueError("Seed move must be next to existing letters")
-
-    temp = deepcopy(state)
-    player = state.currentPlayer
-    temp.board[row][col].letter = letter.upper()
-    temp.currentPlayer = other_player(player)
-    temp.turn += 1
-    temp.consecutivePasses = 0
-    temp.lastChangedCells = [Coord(row=row, col=col)]
-    temp.lastCapturedCells = []
-    temp.lastFortifiedCells = []
-    temp.lastComboLabels = []
-    temp.synergyState = update_synergy_state(temp, [], is_seed=True)
-    item = MoveHistoryItem(
-        turn=state.turn,
-        player=player,
-        word="SEED",
-        moveType="SEED",
-        placedRow=row,
-        placedCol=col,
-        placedLetter=letter.upper(),
-        path=[Coord(row=row, col=col)],
-        redTotalAfter=total_score(temp, "RED"),
-        blueTotalAfter=total_score(temp, "BLUE"),
-    )
-    temp.moveHistory.append(item)
-    temp.recentMoves = [f"{player}: SEED ({letter.upper()})"] + temp.recentMoves[:4]
-    if is_game_over(temp):
-        temp.winner = decide_winner(temp)
-    # Advance market — only for human player moves (flag=True)
-    if advance_market_flag and temp.marketLetters:
-        new_active, new_preview = advance_market(temp, letter.upper())
-        temp.marketLetters  = new_active
-        temp.previewLetters = new_preview
-    return temp
-
-
-def pass_turn(state: GameState):
-    if state.winner:
-        return state
-    temp = deepcopy(state)
-    current = temp.currentPlayer
-    temp.currentPlayer = other_player(temp.currentPlayer)
-    temp.turn += 1
-    temp.consecutivePasses += 1
-    temp.recentMoves = [f"{current}: PASS"] + temp.recentMoves[:4]
-    temp.lastChangedCells = []
-    temp.lastCapturedCells = []
-    temp.lastFortifiedCells = []
-    temp.lastComboLabels = []
-    if is_game_over(temp):
-        temp.winner = decide_winner(temp)
-    return temp
-
-
-def preview_move(state: GameState, row: int, col: int, letter: str, path) -> PreviewMoveResponse:
-    try:
-        word = validate_path_and_word(state, row, col, letter, path) if path else ""
-        includes = path_contains(path, row, col) if path else False
-        valid_len = 3 <= len(word) <= 6
-        in_dict = is_valid_word(word) if valid_len else False
-        response = PreviewMoveResponse(
-            word=word,
-            isValidLength=valid_len,
-            includesPlacedCell=includes,
-            isInDictionary=in_dict,
-            wordScore=word_score(word) if in_dict else 0,
-        )
-        if in_dict and not recent_duplicate_blocked(state, word):
-            after = validate_and_apply_move(clone_state(state), row, col, letter, path)
-            last = after.moveHistory[-1]
-            response.territoryGain = last.territoryGained
-            response.lockGain = last.fortifiedCellsGained
-            response.captureHappened = last.captureCount > 0
-            response.captureCount = last.captureCount
-            response.comboLabels = last.comboLabels
-        return response
-    except Exception as exc:
-        return PreviewMoveResponse(errorMessage=str(exc))
-
-
-def is_game_over(state: GameState) -> bool:
-    if state.winner:
-        return True
-    if state.turn > MAX_TURNS or state.consecutivePasses >= 2:
-        return True
-    return all(cell.letter is not None for row in state.board for cell in row)
-
-
-def decide_winner(state: GameState):
-    # 案4: territory count is primary (Othello-style)
-    red_t = count_territory(state, "RED")
-    blue_t = count_territory(state, "BLUE")
-    if red_t != blue_t:
-        return "RED" if red_t > blue_t else "BLUE"
-    # Tiebreak: word score
-    if state.scores.redWord != state.scores.blueWord:
-        return "RED" if state.scores.redWord > state.scores.blueWord else "BLUE"
-    return "DRAW"
-
-
-# BOT
-
-def get_placeable_empty_cells(state: GameState):
-    return [(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE) if state.board[r][c].letter is None and any(state.board[nr][nc].letter for nr, nc in get_neighbors(r, c))]
-
-
-def generate_paths_from_cell(state: GameState, placed, target_len: int):
-    results = []
-    seen = set()
-
-    def dfs(path):
-        if len(path) == target_len:
-            if placed in path:
-                key = tuple(path)
-                if key not in seen:
-                    seen.add(key)
-                    results.append(path[:])
-            return
-        r, c = path[-1]
-        for nr, nc in get_neighbors(r, c):
-            if (nr, nc) in path:
-                continue
-            if (nr, nc) != placed and state.board[nr][nc].letter is None:
-                continue
-            path.append((nr, nc))
-            dfs(path)
-            path.pop()
-
-    # Start from placed cell or existing cells near it; this supports placed letter in middle/end.
-    starts = [placed]
-    for nr, nc in get_neighbors(placed[0], placed[1]):
-        if state.board[nr][nc].letter:
-            starts.append((nr, nc))
-    for start in starts:
-        dfs([start])
-    return results
-
-
-def letters_from_path(state: GameState, path, placed, placed_letter):
-    chars = []
-    for r, c in path:
-        if (r, c) == placed:
-            chars.append(placed_letter)
-        else:
-            cell = state.board[r][c]
-            if not cell.letter:
-                return None
-            chars.append(cell.letter)
-    return "".join(chars).upper()
-
-
-def find_word_path_for_target(state: GameState, target_word: str):
-    target_word = target_word.upper()
-    for er, ec in get_placeable_empty_cells(state):
-        for idx, ch in enumerate(target_word):
-            # placed letter must supply the matching letter at some path position.
-            for path in generate_paths_from_cell(state, (er, ec), len(target_word)):
-                if (er, ec) not in path:
-                    continue
-                if path.index((er, ec)) != idx:
-                    continue
-                if letters_from_path(state, path, (er, ec), ch) == target_word:
-                    return {
-                        "row": er,
-                        "col": ec,
-                        "letter": ch,
-                        "path": [Coord(row=r, col=c) for r, c in path],
-                        "word": target_word,
-                    }
-    return None
-
-
-def generate_moves_for_lengths(
-    state: GameState,
-    lengths: set[int],
-    limit_words: int,
-    max_results: int,
-    excluded: set[str] | None = None,
-) -> list[dict]:
-    """Find legal moves for the given word lengths.
-
-    excluded: words to skip entirely (for bot: pass state.usedWords to prevent
-              any repetition; for suggestions: pass recent few words).
-              Defaults to the last-3-moves window used by the validator.
-    """
-    available = board_letters_set(state)
-    if excluded is None:
-        excluded = {m.word for m in state.moveHistory[-3:] if m.moveType == "WORD"}
-    # All letters available because bot/player places exactly one new letter
-    all_letters = available | set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
-    def board_overlap(w: str) -> int:
-        """Count letters in w that already exist on board — higher = more likely to have a valid path."""
-        return sum(1 for c in w if c in available)
-
-    words = sorted(
-        (w for w in get_words() if len(w) in lengths and w not in excluded and can_spell_from_board(w, all_letters)),
-        # Prefer words that use more existing board letters (faster to find a path),
-        # tie-break: longer words first (stronger moves), then alphabetical
-        key=lambda w: (-board_overlap(w), -len(w), w),
-    )
-    results = []
-    for word in words[:limit_words]:
-        move = find_word_path_for_target(state, word)
-        if move:
-            results.append(move)
-            if len(results) >= max_results:
-                break
-    return results
-
-
-def simulate_move(state: GameState, move):
-    return validate_and_apply_move(clone_state(state), move["row"], move["col"], move["letter"], move["path"])
-
-
-def evaluate_state_for_player(state: GameState, player: str) -> float:
-    opponent = other_player(player)
-    return (
-        (total_score(state, player) - total_score(state, opponent)) * 5.0
-        + (count_territory(state, player) - count_territory(state, opponent)) * 2.2
-        + (count_locked_cells(state, player) - count_locked_cells(state, opponent)) * 4.0
-    )
-
-
-def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: set) -> list[dict]:
-    """
-    Ultra-fast bot move finder for Render free tier.
-
-    Hard limits to guarantee sub-1s response:
-    - Max 4 placeable cells checked (random sample)
-    - Max path length 4 (even for strong bot)
-    - Stop immediately when max_results found
-    """
-    import string, random
-    words = get_words()
-    results = []
-    LETTERS = string.ascii_uppercase
-
-    placeable = get_placeable_empty_cells(state)
-    # Hard cap: check at most 4 cells, chosen randomly for variety
-    if len(placeable) > 4:
-        placeable = random.sample(placeable, 4)
-
-    # Hard cap path length to 4 regardless of what caller requests
-    effective_len = min(max_len, 4)
-
-    for (er, ec) in placeable:
-        starts = [(er, ec)]
-        for nr, nc in get_neighbors(er, ec):
-            if state.board[nr][nc].letter:
-                starts.append((nr, nc))
-        # Max 3 starts per cell
-        starts = starts[:3]
-
-        for start in starts:
-            stack = [([start], frozenset([start]))]
-            while stack:
-                path, visited = stack.pop()
-                plen = len(path)
-
-                if plen >= 3 and (er, ec) in set(path):
-                    for placed_letter in LETTERS:
-                        word = letters_from_path(state, path, (er, ec), placed_letter)
-                        if word and word in words and word not in excluded:
-                            results.append({
-                                "row": er, "col": ec,
-                                "letter": placed_letter,
-                                "path": [Coord(row=r, col=c) for r, c in path],
-                                "word": word,
-                            })
-                            if len(results) >= max_results:
-                                return results
-
-                if plen >= effective_len:
-                    continue
-
-                r, c = path[-1]
-                for nr, nc in get_neighbors(r, c):
-                    if (nr, nc) in visited:
-                        continue
-                    if (nr, nc) != (er, ec) and not state.board[nr][nc].letter:
-                        continue
-                    stack.append((path + [(nr, nc)], visited | {(nr, nc)}))
-
-    return results
-
-
-def generate_normal_moves(state: GameState) -> list[dict]:
-    used = set(state.usedWords)
-    return _fast_bot_moves(state, max_len=4, max_results=5, excluded=used)
-
-
-def generate_strong_moves(state: GameState) -> list[dict]:
-    used = set(state.usedWords)
-    return _fast_bot_moves(state, max_len=4, max_results=8, excluded=used)
-
-
-def choose_bot_move(state: GameState):
-    if state.botLevel == "normal":
-        moves = generate_normal_moves(state)
-        if not moves:
-            return None
-        player = state.currentPlayer
-        def quick_score(m):
-            try:
-                ns = simulate_move(state, m)
-                base = evaluate_state_for_player(ns, player)
-                last = ns.moveHistory[-1]
-                bonus = sum(3 if l in ("BRIDGE","CUT") else
-                            2 if l in ("CAPTURE","CROSS WORD") else 1
-                            for l in (last.comboLabels or []))
-                return base + bonus
-            except Exception:
-                return word_score(m["word"])
-        return max(moves, key=quick_score)
-
-    # Strong bot: score all candidates, pick best
-    legal_moves = generate_strong_moves(state)
-    if not legal_moves:
-        return None
-    player = state.currentPlayer
-    best_move = None
-    best_value = -10**9
-    for move in legal_moves:
-        try:
-            next_state = simulate_move(state, move)
-        except Exception:
-            continue
-        my_value = evaluate_state_for_player(next_state, player)
-        last = next_state.moveHistory[-1]
-        # Role bonus weighting — prefer moves that earn strategic combos
-        combo_value = 0
-        for label in (last.comboLabels or []):
-            if label in ("BRIDGE", "CUT"):           combo_value += 8
-            elif label in ("CROSS WORD", "FORTIFY CHAIN"): combo_value += 5
-            elif label in ("DOUBLE CAPTURE", "COMEBACK"): combo_value += 4
-            elif label in ("POWER WORD", "CAPTURE"):  combo_value += 3
-            elif label in ("EDGE REACH", "FIRST CAPTURE"): combo_value += 2
-            else:                                     combo_value += 1
-        value = my_value + word_score(move["word"]) * 1.4 + combo_value
-        if value > best_value:
-            best_value = value
-            best_move = move
-    return best_move
-
-
-def choose_seed_move(state: GameState):
-    letters = list("ETAONRISL")
-    cells = get_placeable_empty_cells(state)
-    if not cells:
-        return None
-    r, c = random.choice(cells)
-    return r, c, random.choice(letters)
-
-
-def apply_bot_move(state: GameState):
-    if state.winner:
-        return state
-    # Try word move
-    move = choose_bot_move(state)
-    if move:
-        try:
-            return validate_and_apply_move(
-                state, move["row"], move["col"], move["letter"], move["path"]
-            )
-        except Exception:
-            pass  # Fall through to seed move
-    # Fallback: seed move
-    seed = choose_seed_move(state)
-    if seed:
-        try:
-            return apply_seed_move(state, *seed)
-        except Exception:
-            pass
-    # Last resort: pass
-    return pass_turn(state)
+    if (isSel(r,c)) return; // already in path (not last cell)
+
+    // Phase 0: start path
+    if (path.length === 0) {
+      if (isLegal(r,c)) {
+        // Green cell → becomes placed cell
+        setPlaced({row:r, col:c});
+        setPath([{row:r, col:c}]);
+        setError("");
+      } else if (cell.letter) {
+        // Existing letter → start of path (placed cell comes later)
+        setPath([{row:r, col:c}]);
+        setError("");
+      }
+      return;
+    }
+
+    // Must be adjacent to last
+    const last = path[path.length - 1];
+    if (!adj(last, {row:r, col:c})) return;
+
+    // Adding green cell (placed cell not yet set)
+    if (isLegal(r,c) && !placed) {
+      setPlaced({row:r, col:c});
+      setPath(prev => [...prev, {row:r, col:c}]);
+      setError("");
+      return;
+    }
+
+    // Adding existing letter
+    if (cell.letter) {
+      setPath(prev => [...prev, {row:r, col:c}]);
+      return;
+    }
+
+    // Adding the already-set placed cell
+    if (placed && placed.row===r && placed.col===c) {
+      setPath(prev => [...prev, {row:r, col:c}]);
+    }
+  }
+
+  // ── move actions ─────────────────────────────────────────────────────────
+  const refresh = async (id=gameId) => { try { setSugg(await getSuggestions(id)); } catch { setSugg([]); } };
+  async function submit() {
+    if (!placed) { setError("Tap a green square first."); return; }
+    if (!letter) {
+      setError("Choose a green square on the board first.");
+      return;
+    }
+
+    try {
+      const next = await submitMove({game_id:gameId,row:placed.row,col:placed.col,letter,path});
+      setState(next);
+      // Update market from state immediately
+      if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
+
+      reset(); await refresh();
+      getAlmost(gameId).then(setAlmost).catch(()=>{});
+    } catch(e) { setError(e.message||"Move failed"); }
+  }
+  async function seed() {
+    if (!placed) { setError("Tap a green square first."); return; }
+    if (!letter) { setError("Type one letter in the input box."); return; }
+    try {
+      const next = await seedMove(gameId,{row:placed.row,col:placed.col,letter});
+      setState(next);
+      if (next.marketLetters?.length > 0) setMarket(m => ({...m, active:next.marketLetters, preview:next.previewLetters||[], freeLetterUsed:next.freeLetterUsed||false}));
+
+      reset(); await refresh();
+      getAlmost(gameId).then(setAlmost).catch(()=>{});
+    } catch(e) { setError(e.message||"Seed failed"); }
+  }
+  async function pass() {
+    try { const next = await passTurn(gameId); setState(next); reset(); await refresh(); }
+    catch(e) { setError(e.message||"Pass failed"); }
+  }
+
+  // ④ Submit daily score to leaderboard
+  async function submitScore() {
+    if (!dailyInfo || !dailyResult || submitted) return;
+    try {
+      const nick = nickname.trim() || "Anonymous";
+      const res = await submitDailyScore({
+        nickname: nick,
+        redScore: dailyResult.redScore,
+        blueScore: dailyResult.blueScore,
+        won: dailyResult.winner === "RED",
+        turns: dailyResult.turns,
+      });
+      setMyRank(res.rank);
+      setSubmitted(true);
+    } catch { setError("Could not submit score"); }
+  }
+
+  // ── derived ──────────────────────────────────────────────────────────────
+  const changedS  = new Set((state?.lastChangedCells||[]).map(c=>asKey(c.row,c.col)));
+  const capturedS = new Set((state?.lastCapturedCells||[]).map(c=>asKey(c.row,c.col)));
+  const lockedS   = new Set((state?.lastFortifiedCells  ||[]).map(c=>asKey(c.row,c.col)));
+  const redT = tScore(state,"RED"), blueT = tScore(state,"BLUE");
+  const pct  = Math.round((redT / Math.max(redT+blueT,1)) * 100);
+  const incPlaced = placed && path.some(p=>p.row===placed.row&&p.col===placed.col);
+  const ok = preview?.isInDictionary && preview?.includesPlacedCell;
+  const topMoves = [...(state?.moveHistory||[])].filter(m=>m.moveType==="WORD")
+    .sort((a,b)=>(b.territoryGained*2+b.wordScoreGained*1.5+b.fortifiedCellsGained*2+(b.captureCount?5:0))
+                -(a.territoryGained*2+a.wordScoreGained*1.5+a.fortifiedCellsGained*2+(a.captureCount?5:0)))
+    .slice(0,3);
+
+  if (!state) return (
+    <main className="loading">
+      <div style={{background:"#fff",border:"1px solid #e0e0e0",borderRadius:18,padding:"40px 48px",textAlign:"center",maxWidth:380,width:"90%",boxShadow:"0 4px 24px rgba(0,0,0,.08)"}}>
+        <div style={{fontFamily:"\"Arial Black\",Arial",fontWeight:900,fontSize:24,letterSpacing:3,marginBottom:20}}>WORD TERRITORY</div>
+        <div style={{fontSize:15,fontWeight:700,color:"#333",marginBottom:8,minHeight:24}}>{bootMsg}</div>
+        <div style={{fontSize:12,color:"#999",marginBottom:20,lineHeight:1.6}}>The first game of the day may take a moment.</div>
+        <div style={{height:6,background:"#eee",borderRadius:999,overflow:"hidden"}}>
+          <div style={{height:"100%",background:"#111",borderRadius:999,animation:"loadpulse 1.8s ease-in-out infinite"}}/>
+        </div>
+      </div>
+      <style>{`@keyframes loadpulse{0%{width:10%}50%{width:75%}100%{width:10%}}`}</style>
+    </main>
+  );
+
+  // ── render ────────────────────────────────────────────────────────────────
+  return <>
+    <Head>
+      {/* ③ SEO + social meta tags */}
+      <title>Word Territory{dailyMode&&dailyInfo?` · Daily #${dailyInfo.dayNumber}`:""}</title>
+      <meta name="description" content="Word Territory is a spatial strategy game where you use words to capture territory, lock cells, and outmaneuver your opponent. Play the Daily Challenge!" />
+      <meta property="og:title" content="Word Territory" />
+      <meta property="og:description" content="A spatial strategy word game. Daily Challenge · Combo moves · Territory control." />
+      <meta property="og:url" content="https://wordterritory.com" />
+      <meta property="og:type" content="website" />
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content="Word Territory" />
+      <meta name="twitter:description" content="Strategy meets vocabulary. Play the Daily Challenge!" />
+      <meta name="theme-color" content="#111111" />
+      <link rel="manifest" href="/manifest.json" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+    </Head>
+
+    <main className="page">
+      {/* ── header ── */}
+      <div className="hdr">
+        <div className="hdr-l">
+          <h1>WORD TERRITORY{dailyMode&&dailyInfo&&<span className="dpill">Daily #{dailyInfo.dayNumber}</span>}</h1>
+          <p className="sub">Opening: {state.openingName} · {thinking?"Bot thinking…":state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
+        </div>
+        <div className="hdr-r">
+          {!dailyMode&&(
+            <div className="mode-box">
+              <label>Bot</label>
+              <select value={mode} onChange={e=>setMode(e.target.value)}>
+                <option value="normal">Normal</option>
+                <option value="strong">Strong</option>
+              </select>
+            </div>
+          )}
+          {dailyInfo&&!dailyMode&&(
+            <div className="dcard">
+              <span className="dnum">Day #{dailyInfo.dayNumber}</span>
+              <span className="dsub">{streak>1?`🔥 ${streak} day streak`:(dailyResult?"Completed ✓":dailyInfo.openingName)}</span>
+              <div className="dcard-btns">
+                <button className="btn-daily" onClick={dailyResult?()=>{setSum(true);setDailyMode(true);}:bootDaily}>
+                  {dailyResult?"View":"Play"}
+                </button>
+                <button className="btn-daily-lb" onClick={()=>setShowLB(true)} title="Leaderboard">🏆</button>
+              </div>
+            </div>
+          )}
+          <button className="bsm" onClick={()=>setRules(v=>!v)}>{showRules?"✕ Rules":"? Rules"}</button>
+          <Link href="/about" className="bsm" style={{textDecoration:"none",color:"#111"}}>About</Link>
+          {!isTutorial && <button className="bsm prem-btn" onClick={()=>setPremium(true)}>✦ Premium</button>}
+          {dailyMode
+            ?<button className="bprim" onClick={()=>boot(mode)}>← Free Play</button>
+            :<button className="bprim" onClick={()=>boot(mode)}>New Game</button>
+          }
+        </div>
+      </div>
+
+      {/* ── First-move guide ── */}
+      {tutTurns === 0 && human() && (
+        <div className="firstmove-banner">
+          <strong>How to play:</strong>{" "}
+          Tap a <span className="fm-green">green square</span> → type a letter → connect letters to make a word → press <strong>Capture Word</strong>
+        </div>
+      )}
+      {/* ── score bar ── */}
+      <div className="sbar">
+        <div className="srow">
+          <span className="stxt red-t">🔴 {redT} cells</span>
+          <span className="smid">
+            {isTutorial
+              ? "Goal: more red cells than blue"
+              : redT===blueT ? "Tied" : `${redT>blueT?"🔴 RED":"🔵 BLUE"} +${Math.abs(redT-blueT)}`}
+          </span>
+          <span className="stxt blue-t">{blueT} cells 🔵</span>
+        </div>
+        <div className="bar"><div className="br" style={{width:`${pct}%`}}/><div className="bb" style={{width:`${100-pct}%`}}/></div>
+      </div>
+
+      {/* ── rules ── */}
+      {showRules&&(
+        <div className="rules">
+          <strong>Build words from a shared draft. Place letters. Capture territory.</strong>
+          <ol>
+            <li>Tap a <em>green square</em> → type any letter → connect letters to make a 3–6 letter word → press <strong>Capture Word ⚔</strong>.</li>
+            <li>Example: board has D–S–T, place U → select D→U→S→T → DUST! Your letter can go anywhere in the path.</li>
+            <li>Enclose opponent cells to <strong>capture</strong> them. Surrounded own cells become 🏰 <strong>Fortified</strong>.</li>
+            <li><strong>Role Bonuses</strong> — earn extra territory: BRIDGE +3T · CUT +2T · CROSS WORD +2T · POWER WORD +1T</li>
+            <li><strong>Seed</strong> — place a letter without capturing when stuck. Good for setting up future words.</li>
+            <li><strong>Goal:</strong> More red cells than blue wins. Territory beats vocabulary.</li>
+            <li><strong>Daily Challenge</strong> — same board worldwide each day. One attempt. Strong bot.</li>
+          </ol>
+        </div>
+      )}
+
+      {/* ── banners ── */}
+      {dailyMode&&<div className="dbanner">🗓️ Daily #{dailyInfo?.dayNumber} · {dailyInfo?.dateStr} · Strong Bot{streak>1?` · 🔥 ${streak} day streak`:""}</div>}
+      {thinking&&<div className="bnr thinking">Bot is thinking…</div>}
+      {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
+      {error&&<div className="bnr err">{error}<button className="bx" onClick={()=>setError("")}>✕</button></div>}
+
+      {/* ── layout ── */}
+      <div className="layout">
+        <div className="bcol">
+          {/* board */}
+          <div className="bwrap">
+            <div className="board-wrap"><div className="board">
+              {state.board.map(row=>row.map(cell=>{
+                const k=asKey(cell.row,cell.col);
+                return <Cell key={k} cell={cell}
+                  sel={isSel(cell.row,cell.col)} placed={placed?.row===cell.row&&placed?.col===cell.col}
+                  legal={!placed&&isLegal(cell.row,cell.col)}
+                  changed={changedS.has(k)} captured={capturedS.has(k)} lockedNow={lockedS.has(k)}
+                  disabled={isDim(cell.row,cell.col)} gen={animGen}
+                  attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
+                  inPath={inPathOpponentSet.has(k)}
+                  onClick={()=>clickCell(cell.row,cell.col)}/>;
+              }))}
+            </div>
+          </div>
+          </div>
+
+          {/* ── Winner Banner ── */}
+          {state.winner && (
+            <div className="winner-banner">
+              {state.winner === "DRAW" ? "🤝 Draw" :
+               state.winner === "RED"  ? "🔴 RED wins!" :
+                                         "🔵 BLUE wins!"}
+              <span className="winner-score">
+                {state.winner !== "DRAW" && ` · ${Math.max(redT,blueT)}–${Math.min(redT,blueT)}`}
+              </span>
+            </div>
+          )}
+
+          {/* ── Letter Market ── */}
+          {!state.winner && (
+            <div className="lm-panel" style={{display: market.active.length > 0 ? 'block' : 'none'}}>
+              <div className="lm-header">
+                <span className="lm-title">🎴 Letter Market</span>
+                <span className="lm-preview">
+                  Next: {market.preview.map((l,i) => <span key={i} className="lm-prev-chip">{l}</span>)}
+                </span>
+              </div>
+              <div className="lm-active">
+                {market.stats.map((s,i) => (
+                  <button key={i}
+                    className={`lm-tile ${letter===s.letter ? 'lm-selected' : ''}`}
+                    onClick={() => { setLetter(s.letter); setPath([]); setPlaced(null); setError(''); setPreview(null); }}
+                    disabled={!human()}
+                    title={s.bestWord ? `Best: ${s.bestWord} +${s.bestGain}T` : 'No words available'}
+                  >
+                    <span className="lm-letter">{s.letter}</span>
+                    {s.wordCount > 0 ? (
+                      <span className="lm-stats">
+                        {s.bestGain > 0 && <span className="lm-gain">+{s.bestGain}T</span>}
+                        {s.wordCount > 0 && <span className="lm-count">{s.wordCount}w</span>}
+                        {s.roles?.length > 0 && <span className="lm-role">{s.roles[0].substring(0,3)}</span>}
+                      </span>
+                    ) : (
+                      <span className="lm-stats"><span className="lm-zero" style={{fontSize:10}}>no words</span></span>
+                    )}
+                  </button>
+                ))}
+                {/* Free Letter (Wild) */}
+                {!market.freeLetterUsed ? (
+                  <button className={`lm-tile lm-free ${showFreeInput ? 'lm-selected' : ''}`}
+                    onClick={() => setShowFreeInput(v => !v)}
+                    disabled={!human()}
+                    title="Use once per game — choose any letter"
+                  >
+                    <span className="lm-letter">⭐</span>
+                    <span className="lm-stats"><span className="lm-freeLabel">FREE</span></span>
+                  </button>
+                ) : (
+                  <div className="lm-tile lm-free lm-used" title="Free letter already used">
+                    <span className="lm-letter" style={{opacity:0.3}}>⭐</span>
+                    <span className="lm-stats"><span className="lm-zero">USED</span></span>
+                  </div>
+                )}
+              </div>
+              {showFreeInput && (
+                <div className="lm-free-row">
+                  <input className="lm-free-input" maxLength={1}
+                    placeholder="Type any letter"
+                    value={freeLetter}
+                    onChange={e => setFreeLetter(e.target.value.toUpperCase().replace(/[^A-Z]/g,''))}
+                    onKeyDown={e => {
+                      if(e.key==='Enter' && freeLetter) {
+                        useFreeLetter(gameId, freeLetter).then(r => {
+                          setMarket(m => ({...m, ...r}));
+                          setLetter(freeLetter);
+                          setShowFreeInput(false);
+                          setPath([]); setPlaced(null);
+                        }).catch(e => setError(e.message));
+                      }
+                    }}
+                  />
+                  <button className="lm-free-confirm"
+                    onClick={() => {
+                      if(!freeLetter) return;
+                      useFreeLetter(gameId, freeLetter).then(r => {
+                        setMarket(m => ({...m, ...r}));
+                        setLetter(freeLetter);
+                        setShowFreeInput(false);
+                        setPath([]); setPlaced(null);
+                      }).catch(e => setError(e.message));
+                    }}
+                  >Use ⭐</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* move controls */}
+          <div className="mpanel">
+            <div className="mrow">
+              <label className="mlbl">{market.active.length > 0 ? "Selected" : "Letter"}</label>
+              <input ref={letterRef}
+                className={`minput${market.active.length > 0 && !letter ? ' minput-empty' : ''}`}
+                value={letter} maxLength={1}
+                disabled={!human()}
+                readOnly={market.active.length > 0}
+                onChange={e=>{ if(market.active.length===0) setLetter(e.target.value.toUpperCase().slice(0,1)); }}
+                placeholder={market.active.length > 0 ? "—" : "A"}
+                style={market.active.length > 0 && !letter ? {color:'#ccc'} : {}}
+              />
+              <div className={`pvbox ${ok?"pvok":""}`}>
+                <div className="pvword">{currentWord||"—"}</div>
+                {preview?(
+                  preview.errorMessage
+                    ?<div className="pverr">{preview.errorMessage}</div>
+                    :<>
+                      <div className="pvstats">
+                        {preview.isInDictionary?"✓ Valid":"Not in dictionary"}
+                        {" · "}+{preview.wordScore}pts · +{preview.territoryGain}T
+                        {preview.lockGain>0&&` · 🔒${preview.lockGain}`}
+                        {preview.captureHappened&&<span className="pvcap"> ⚔ CAPTURE +{preview.captureCount||1}</span>}
+                      </div>
+                      {preview.comboLabels?.length>0&&<div className="chips">{preview.comboLabels.map(x=><span key={x} className="chip combo">{x}</span>)}</div>}
+                    </>
+                ):(
+                  <div className="pvhint">
+                    {!placed
+                      ? (market.active.length > 0 ? (thinking ? "Bot is thinking..." : state?.winner ? "Game Over" : "Choose a tile from Letter Market above ↑ then tap a green square.") : "Tap a green square to place a letter.")
+                      : !letter
+                      ? "Type one letter."
+                      : path.length < 2
+                      ? "Now tap connected letters to make a word."
+                      : !incPlaced
+                      ? "Path must include your placed letter."
+                      : "Keep connecting — need 3–6 letters total."}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="brow">
+              <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Capture Word ⚔" : "Submit"}</button>
+              {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()}>Seed</button>}
+              <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
+              {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
+            </div>
+          </div>
+        </div>
+
+        {/* side panel */}
+        <div className="scol">
+          {synergy && synergyOpts.length > 0 && (() => {
+            const sc = synergyOpts.find(c => c.key === synergy);
+            if (!sc) return null;
+            return (
+              <div className="syn-active">
+                {sc.icon}{' '}<strong>{sc.name}</strong>
+                <span className="syn-active-effect">{sc.effect}</span>
+              </div>
+            );
+          })()}
+          {almost.length > 0 && (
+            <div className="almost-box">
+              <div className="almost-title">🀄 Almost — place one letter to make:</div>
+              <div className="almost-list">
+                {almost.map((a,i) => (
+                  <span key={i} className="almost-chip">
+                    +<strong>{a.needs}</strong> → {a.word}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="panel">
+            <div className="ph" onClick={()=>setSuggest(v=>!v)}>
+              <span>💡 Suggested</span><span className="ci">{showSuggest?"▲":"▼"}</span>
+            </div>
+            {showSuggest&&(
+              <div className="chips sc">
+                {[...new Set(suggestions)].length?[...new Set(suggestions)].map(w=><span key={w} className="chip">{w}</span>):<div className="no-word-hint">No playable word found.<br/>Use <strong>Seed</strong> to place a tile without capturing.</div>}
+              </div>
+            )}
+          </div>
+          <div className="panel">
+            <div className="ph" onClick={()=>setHistory(v=>!v)}>
+              <span>📋 History</span><span className="ci">{showHistory?"▲":"▼"}</span>
+            </div>
+            {showHistory&&(
+              <div className="hist" ref={histRef}>
+                {!state.moveHistory.length&&<div className="muted">No moves yet</div>}
+                {state.moveHistory.map((m,i)=><HistItem key={i} m={m}/>)}
+              </div>
+            )}
+          </div>
+
+          {/* ③ Streak widget */}
+          {streak>0&&(
+            <div className="streak-widget">
+              <span className="streak-fire">🔥</span>
+              <div>
+                <div className="streak-num">{streak}</div>
+                <div className="streak-lbl">day streak</div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── summary modal ── */}
+      {/* ── Synergy Card Selection Modal ── */}
+      {showSynergy && !synergy && (
+        <div className="modal-bg" onClick={e => e.target===e.currentTarget&&setShowSynergy(false)}>
+          <div className="modal syn-modal">
+            <h2 style={{marginBottom:6}}>🎴 Choose Your Strategy</h2>
+            <p style={{fontSize:13,color:'#888',marginBottom:20}}>Pick one card. It stays active the whole game.</p>
+            <div className="syn-cards">
+              {synergyOpts.map(card => (
+                <button key={card.key} className="syn-card"
+                  onClick={() => {
+                    selectSynergy(gameId, card.key)
+                      .then(() => { setSynergy(card.key); setShowSynergy(false); })
+                      .catch(() => { setSynergy(card.key); setShowSynergy(false); });
+                  }}
+                >
+                  <div className="syn-icon">{card.icon}</div>
+                  <div className="syn-name">{card.name}</div>
+                  <div className="syn-effect">{card.effect}</div>
+                  <div className="syn-flavor">{card.flavor}</div>
+                </button>
+              ))}
+            </div>
+            <button className="syn-skip" onClick={() => setShowSynergy(false)}>
+              Skip — play without a card
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showSummary&&(
+        <div className="modal-bg" onClick={e=>e.target===e.currentTarget&&setSum(false)}>
+          <div className="modal">
+            {dailyMode&&dailyInfo?(
+              <>
+                <h2>Daily #{dailyInfo.dayNumber} {streak>1?`🔥 ${streak}`:""}
+                </h2>
+                <p className="muted">{dailyInfo.dateStr} · {dailyInfo.openingName}</p>
+                <div className="scard">
+                  <div className="scrow"><span>🔴 YOU</span><strong>{redT} cells</strong></div>
+                  <div className="scrow"><span>🔵 BOT</span><strong>{blueT} cells</strong></div>
+                  <div className="scres">{(dailyResult?.winner??state.winner)==="RED"?"✅ WIN":(dailyResult?.winner??state.winner)===null?"🤝 DRAW":"❌ LOSS"}</div>
+                  <div className="muted tac">{(dailyResult?.turns??state.turn-1)} turns · Territory ×1.5 + Words</div>
+                </div>
+                {topMoves.length>0&&<><h3>Top Moves</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
+
+                {/* Share card */}
+                {shareText&&(
+                  <div className="swrap">
+                    <pre className="spre">{shareText}</pre>
+                    <button className="bcopy" onClick={async()=>{try{await navigator.clipboard.writeText(shareText);setCopied(true);setTimeout(()=>setCopied(false),2500);}catch{}}}>
+                      {copied?"✓ Copied!":"Copy & Share"}
+                    </button>
+                  </div>
+                )}
+
+                {/* ④ Leaderboard submission */}
+                <div className="lb-submit">
+                  <h3>🏆 Post your score to the leaderboard</h3>
+                  {!submitted?(
+                    <div className="lb-form">
+                      <input className="nick-input" value={nickname} maxLength={20} placeholder="Your name (optional)"
+                        onChange={e=>setNickname(e.target.value)}/>
+                      <button className="bprim" onClick={submitScore}>Post Score</button>
+                    </div>
+                  ):(
+                    <div className="lb-ok">
+                      Score posted! You are <strong>#{myRank}</strong> today.
+                      <button className="bsm" style={{marginLeft:8}} onClick={()=>setShowLB(true)}>View Leaderboard</button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="modal-btns">
+                  <button className="bprim" onClick={()=>{setSum(false);boot(mode);}}>Free Play</button>
+                  <button onClick={()=>setShowLB(true)}>🏆 Leaderboard</button>
+                  <button onClick={()=>setSum(false)}>Close</button>
+                </div>
+              </>
+            ):(
+              <>
+                <h2>Game Over</h2>
+                <p>Winner: <strong>{state.winner||"Draw"}</strong></p>
+                <div className="scard">
+                  <div className="scrow"><span>🔴 RED</span><strong>{redT} cells</strong></div>
+                  <div className="scrow"><span>🔵 BLUE</span><strong>{blueT} cells</strong></div>
+                </div>
+                {topMoves.length>0&&<><h3>Top Moves</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
+                <div className="modal-btns">
+                  <button className="bprim" onClick={()=>boot(mode)}>New Game</button>
+                  {dailyInfo&&!dailyResult&&<button onClick={()=>{setSum(false);bootDaily();}}>Daily Challenge</button>}
+                  <button onClick={()=>setPremium(true)}>✦ Premium</button>
+                  <button onClick={()=>setSum(false)}>Close</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showLB&&<LeaderboardModal onClose={()=>setShowLB(false)} dailyInfo={dailyInfo} myRank={myRank}/>}
+      {showPremium&&<PremiumModal onClose={()=>setPremium(false)}/>}
+    </main>
+
+    <style jsx global>{`
+      *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;background:#f0f2f5;color:#111;font-size:15px}
+      .loading{padding:30px;text-align:center}
+      .page{padding:14px;max-width:1400px;margin:0 auto}
+
+      /* header */
+      .hdr{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+      .hdr-l h1{font-size:22px;letter-spacing:2px;font-weight:900}
+      .sub{font-size:12px;color:#666;margin-top:2px}
+      .dpill{display:inline-block;background:#111;color:#fff;font-size:11px;border-radius:999px;padding:2px 9px;margin-left:8px;font-weight:700;vertical-align:middle}
+      .hdr-r{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+      .mode-box{background:#fff;border:1px solid #ddd;border-radius:10px;padding:6px 10px;display:flex;flex-direction:column;gap:2px}
+      .mode-box label{font-size:11px;color:#888}
+      .mode-box select{border:none;outline:none;font-size:14px;font-weight:600;background:transparent;cursor:pointer}
+      .dcard{background:#111;color:#fff;border-radius:12px;padding:8px 12px;display:flex;flex-direction:column;gap:3px;min-width:140px}
+      .dnum{font-weight:800;font-size:14px}
+      .dsub{font-size:11px;opacity:.65}
+      .dcard-btns{display:flex;gap:5px;margin-top:4px}
+      .btn-daily{background:#fff;color:#111;border:none;border-radius:7px;padding:5px 10px;font-weight:700;cursor:pointer;font-size:12px}
+      .btn-daily:hover{background:#fffde7}
+      .btn-daily-lb{background:transparent;border:1px solid rgba(255,255,255,.3);border-radius:7px;padding:4px 8px;cursor:pointer;font-size:14px}
+      .btn-daily-lb:hover{background:rgba(255,255,255,.15)}
+      .bsm{padding:8px 12px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer;font-size:13px;white-space:nowrap}
+      .bsm:hover{background:#f5f5f5}
+      .prem-btn{border-color:#d4af37;color:#b8860b;font-weight:700}
+      .bprim{padding:9px 16px;border-radius:10px;border:none;background:#111;color:#fff;cursor:pointer;font-size:14px;font-weight:700;white-space:nowrap}
+      .bprim:hover{background:#333}
+
+      /* score bar */
+      .sbar{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:12px 16px;margin-bottom:10px}
+      .srow{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+      .stxt{font-weight:800;font-size:16px}
+      .smid{font-size:13px;color:#555}
+      .red-t{color:#c0392b}.blue-t{color:#2271b3}
+      .bar{height:12px;display:flex;border-radius:999px;overflow:hidden;background:#e0e0e0}
+      .br{background:rgba(192,57,43,.6);transition:width .4s ease}.bb{background:rgba(34,113,179,.6);transition:width .4s ease}
+
+      /* rules */
+      .rules{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px 18px;margin-bottom:10px;line-height:1.7}
+      .rules ol{padding-left:18px}.rules li{margin-bottom:3px}
+
+      /* banners */
+      .dbanner{background:#111;color:#fff;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-weight:700;font-size:13px}
+      .bnr{padding:10px 14px;border-radius:10px;margin-bottom:10px;font-size:14px}
+      .thinking{background:#eef3ff;color:#1a47a0}
+      .combo{background:#fff9c4;font-weight:800;text-align:center;font-size:16px;border:2px solid #f5d000}
+      .err{background:#ffeaea;color:#8b1a1a;display:flex;justify-content:space-between;align-items:center}
+      .bx{background:none;border:none;cursor:pointer;font-size:16px;color:#8b1a1a}
+
+      /* layout */
+      .layout{display:grid;grid-template-columns:1fr 290px;gap:12px;align-items:start}
+      .bcol{display:flex;flex-direction:column;gap:10px}
+
+      /* board */
+      .bwrap{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px;overflow-x:auto}
+      .board-wrap{width:100%;overflow-x:auto;display:flex;justify-content:center;-webkit-overflow-scrolling:touch}
+      .board{display:grid;grid-template-columns:repeat(7,58px);gap:5px;justify-content:center;min-width:max-content}
+      .cell{width:44px;height:44px;border:1.5px solid #c8c8c8;border-radius:9px;background:#fafafa;font-size:17px;font-weight:800;cursor:pointer;transition:background .12s}
+      .cell.cr{background:rgba(192,57,43,.15);border-color:rgba(192,57,43,.3)}
+      .cell.cb{background:rgba(34,113,179,.15);border-color:rgba(34,113,179,.3)}
+      .cell.ft{border-width:3px;border-color:#111}
+      .cell.sl{outline:3px solid #f0a500;outline-offset:-2px}
+      .cell.pl{box-shadow:inset 0 0 0 3px #111}
+      .cell.lg{background:#e8fce8;border-color:#5cb85c}
+      .cell.lg:hover{background:#d0f7d0}
+      .cell.dm{opacity:.35;cursor:not-allowed}
+      .cell[data-chg]{animation:aclaim 500ms ease forwards}
+      .cell[data-cap]{animation:acap 800ms ease forwards}
+      .cell[data-lk]{animation:alk 600ms ease forwards}
+      /* ── Letter Market ─────────────────────────────────────────────────── */
+      .lm-panel{background:#fff;border:1.5px solid #e0e0e0;border-radius:14px;padding:10px 14px;margin-bottom:10px}
+      .lm-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+      .lm-title{font-size:13px;font-weight:800;color:#333;letter-spacing:.3px}
+      .lm-preview{display:flex;align-items:center;gap:4px;font-size:12px;color:#999}
+      .lm-prev-chip{background:#f0f0f0;border-radius:6px;padding:1px 7px;font-weight:700;color:#666;font-size:13px}
+      .lm-active{display:flex;gap:8px;flex-wrap:wrap}
+      .lm-tile{background:#f8f9fa;border:2px solid #e0e0e0;border-radius:12px;padding:8px 10px;
+               min-width:60px;cursor:pointer;transition:all .15s;display:flex;flex-direction:column;
+               align-items:center;gap:2px;font-family:inherit}
+      .lm-tile:hover:not(:disabled){background:#eef2ff;border-color:#6366f1;transform:translateY(-1px)}
+      .lm-tile:disabled{opacity:.5;cursor:default}
+      .lm-selected{background:#eef2ff!important;border-color:#6366f1!important;box-shadow:0 0 0 2px #a5b4fc}
+      .lm-letter{font-size:22px;font-weight:900;color:#111;line-height:1}
+      .lm-stats{display:flex;gap:3px;align-items:center;flex-wrap:wrap;justify-content:center}
+      .lm-gain{background:#dcfce7;color:#166534;border-radius:4px;padding:1px 5px;font-size:11px;font-weight:700}
+      .lm-count{background:#e0f2fe;color:#075985;border-radius:4px;padding:1px 5px;font-size:11px;font-weight:600}
+      .lm-role{background:#fef9c3;color:#713f12;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:700}
+      .lm-zero{color:#aaa;font-size:11px}
+      .lm-free{background:#fffbeb;border-color:#fbbf24}
+      .lm-free:hover:not(:disabled){background:#fef3c7!important;border-color:#d97706!important}
+      .lm-freeLabel{background:#fef3c7;color:#92400e;border-radius:4px;padding:1px 5px;font-size:11px;font-weight:800}
+      .lm-used{opacity:.4;cursor:default!important}
+      .lm-free-row{display:flex;gap:8px;margin-top:8px;align-items:center}
+      .lm-free-input{border:2px solid #fbbf24;border-radius:8px;padding:6px 10px;font-size:18px;
+                     font-weight:900;width:80px;text-align:center;text-transform:uppercase;outline:none}
+      .lm-free-confirm{background:#f59e0b;color:#fff;border:none;border-radius:8px;padding:6px 14px;
+                       font-weight:800;cursor:pointer;font-size:13px}
+      .lm-free-confirm:hover{background:#d97706}
+
+      /* Winner banner */
+      .winner-banner{background:#111;color:#fff;text-align:center;padding:14px;font-size:22px;
+                     font-weight:900;border-radius:12px;margin-bottom:8px;letter-spacing:1px}
+      .winner-score{font-size:16px;font-weight:400;color:#aaa;margin-left:8px}
+
+      /* Synergy Card Modal */
+      .syn-modal{max-width:520px;text-align:center}
+      .syn-cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px}
+      .syn-card{background:#f8f9fa;border:2px solid #e0e0e0;border-radius:14px;padding:14px 10px;
+                cursor:pointer;transition:all .15s;text-align:center;font-family:inherit}
+      .syn-card:hover{background:#eef2ff;border-color:#6366f1;transform:translateY(-2px);
+                      box-shadow:0 4px 16px rgba(99,102,241,.15)}
+      .syn-icon{font-size:28px;margin-bottom:6px}
+      .syn-name{font-size:14px;font-weight:800;color:#111;margin-bottom:6px}
+      .syn-effect{font-size:12px;color:#444;line-height:1.4;margin-bottom:8px}
+      .syn-flavor{font-size:11px;color:#999;font-style:italic}
+      .syn-skip{background:none;border:none;color:#aaa;font-size:12px;cursor:pointer;
+                text-decoration:underline;padding:4px}
+      /* Active synergy display */
+      .syn-active{background:#f0f4ff;border:1.5px solid #c7d2fe;border-radius:10px;
+                  padding:8px 12px;margin-bottom:8px;font-size:12px;color:#3730a3}
+      .syn-active-effect{display:block;font-size:11px;color:#6366f1;margin-top:3px;font-style:italic}
+
+      /* Tenpai / Almost UI */
+      .almost-box{background:#fffdf0;border:1.5px solid #f0c040;border-radius:12px;padding:8px 12px;margin-bottom:8px}
+      .almost-title{font-size:11px;font-weight:800;color:#b08000;margin-bottom:6px;letter-spacing:.3px}
+      .almost-list{display:flex;flex-wrap:wrap;gap:5px}
+      .almost-chip{background:#fff9e0;border:1px solid #e0c030;border-radius:20px;padding:2px 9px;font-size:12px;white-space:nowrap}
+      .almost-chip strong{color:#c06000;font-size:13px;font-weight:900}
+
+      /* rank / capture display */
+      .rank-display{text-align:center;font-size:20px;font-weight:900;padding:10px 0 2px}
+      .rank-title{color:#111}
+      .capture-pct{text-align:center;font-size:30px;font-weight:900;color:#c0392b;margin-bottom:6px}
+      .streak-display{text-align:center;font-size:13px;font-weight:700;color:#e65c00;margin-top:6px;padding:5px;background:#fff9f0;border-radius:8px}
+
+      /* first-move banner */
+      .firstmove-banner{background:#fffde7;border:2px solid #f5d000;border-radius:12px;padding:10px 16px;margin-bottom:10px;font-size:13px;line-height:1.6}
+      .fm-green{background:#d4edda;color:#155724;padding:1px 5px;border-radius:4px;font-weight:700}
+      /* valid word hint */
+      .pvok-hint{color:#1a7a3c;font-weight:700;font-size:13px;margin-bottom:4px}
+
+      /* attack highlighting */
+      .cell{position:relative}
+      .cell.atk{box-shadow:inset 0 0 0 2px rgba(255,140,0,.8);background:rgba(255,140,0,.06)}
+      .cell.inpath{box-shadow:inset 0 0 0 3px #e65c00 !important;background:rgba(255,100,0,.25) !important;animation:ainpath .5s ease infinite alternate}
+      .atk-dot{position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:rgba(255,140,0,.9);pointer-events:none}
+      .pvcap{color:#e65c00;font-weight:800;font-size:13px}
+      @keyframes ainpath{0%{box-shadow:inset 0 0 0 3px #e65c00}100%{box-shadow:inset 0 0 0 3px #ff8c00}}
+      @keyframes aclaim{0%{transform:scale(1.12)}100%{transform:scale(1)}}
+      @keyframes acap{0%,30%{background:#ffe040}100%{}}
+      @keyframes alk{0%{box-shadow:0 0 0 6px #111 inset}50%{box-shadow:0 0 0 2px #111 inset}100%{}}
+
+      /* move panel */
+      .mpanel{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px}
+      .mrow{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px}
+      .mlbl{font-size:12px;color:#888;white-space:nowrap;padding-top:14px}
+      /* ── Draft tiles ── */
+      .draft-hint{font-size:10px;color:#999;font-weight:400}
+      .hand-tiles{display:flex;gap:6px;flex-wrap:nowrap}
+      .htile{
+        width:46px;height:52px;border:2px solid #ccc;border-radius:11px;
+        background:#fff;font-size:20px;font-weight:900;cursor:pointer;
+        letter-spacing:0;font-family:"Arial Black",Arial;
+        transition:transform .1s,background .1s,border-color .1s;
+        flex-shrink:0;
+      }
+      .htile:hover:not(.htile-dim){background:#f0f7ff;border-color:#5b8dee;transform:translateY(-3px)}
+      .htile-sel{
+        background:#111 !important;color:#fff !important;
+        border-color:#111 !important;transform:translateY(-4px) !important;
+        box-shadow:0 4px 12px rgba(0,0,0,.25);
+      }
+      .htile-dim{opacity:.35;cursor:not-allowed}
+      .hand-hidden-input{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}
+      /* legacy input fallback */
+      .minput-empty::placeholder{color:#bbb}
+      .minput{width:50px;height:48px;border:2px solid #ccc;border-radius:10px;font-size:22px;font-weight:800;text-align:center;outline:none;text-transform:uppercase;flex-shrink:0}
+      .minput:focus{border-color:#111}.minput:disabled{background:#f4f4f4}
+      .pvbox{flex:1;background:#f7f9fc;border:1px solid #e2e8f0;border-radius:12px;padding:10px;min-height:60px}
+      .pvbox.pvok{border-color:#5cb85c;background:#f0fdf4}
+      .pvword{font-size:20px;font-weight:900;letter-spacing:2px;min-height:26px}
+      .pvstats{font-size:12px;color:#444;margin-top:3px}
+      .pverr{font-size:12px;color:#c0392b}
+      .pvhint{font-size:12px;color:#999;font-style:italic}
+      .btns{display:flex;gap:7px;flex-wrap:wrap}
+      .ba{flex:1;min-width:60px;padding:11px 6px;border-radius:10px;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:14px;font-weight:600}
+      .ba:hover:not(:disabled){background:#f5f5f5}
+      .ba:disabled{opacity:.4;cursor:not-allowed}
+      .bsubmit{background:#111!important;color:#fff;border-color:#111!important}
+      .bsubmit:hover:not(:disabled){background:#333!important}
+      .bseed{background:#fffff0;border-color:#d4c000}
+      .no-word-hint{font-size:12px;color:#666;line-height:1.7;padding:4px 2px}
+
+      /* side panel */
+      .scol{display:flex;flex-direction:column;gap:10px}
+      .panel{background:#fff;border:1px solid #e0e0e0;border-radius:14px;overflow:hidden}
+      .ph{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;cursor:pointer;font-weight:700;font-size:14px;user-select:none}
+      .ph:hover{background:#fafafa}.ci{color:#999;font-size:11px}
+      .chips{display:flex;flex-wrap:wrap;gap:5px;padding:6px 14px 12px}
+      .sc{padding:6px 14px 12px}
+      .chip{font-size:12px;border:1px solid #ddd;background:#f8f8f8;border-radius:999px;padding:3px 8px}
+      .chip.combo{background:#fff9c4;border-color:#f0d000;font-weight:700}
+      .muted{color:#999;font-size:12px;padding:4px 0}
+      .hist{max-height:360px;overflow-y:auto}
+      .hi{padding:8px 14px;border-bottom:1px solid #f0f0f0}
+      .hi-head{display:flex;gap:8px;align-items:baseline}
+      .hiw{font-weight:700;letter-spacing:.5px}
+      .hi-stats{font-size:11px;color:#777;margin-top:2px}
+
+      /* ③ streak */
+      .streak-widget{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:12px 16px;display:flex;align-items:center;gap:12px}
+      .streak-fire{font-size:28px}
+      .streak-num{font-size:28px;font-weight:900;line-height:1}
+      .streak-lbl{font-size:12px;color:#888}
+
+      /* modal base */
+      .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+      .modal{background:#fff;border-radius:18px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto;padding:24px;box-shadow:0 16px 48px rgba(0,0,0,.3)}
+      .modal h2{font-size:22px;margin-bottom:6px}
+      .modal h3{font-size:15px;margin:14px 0 8px}
+      .modal-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+      .modal-btns button{flex:1;padding:11px 14px;border-radius:10px;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:14px}
+      .modal-btns button:first-child{background:#111;color:#fff;border-color:#111}
+
+      /* summary */
+      .scard{background:#f7f9fc;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin:12px 0}
+      .scrow{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:17px}
+      .scrow strong{font-size:24px}
+      .scres{text-align:center;font-size:28px;font-weight:900;padding:8px 0 4px}
+      .tac{text-align:center}
+      .swrap{margin:14px 0}
+      .spre{background:#f4f4f4;border:1px solid #ddd;border-radius:10px;padding:14px;font-size:12px;line-height:1.7;white-space:pre-wrap;font-family:monospace}
+      .bcopy{display:block;width:100%;background:#111;color:#fff;border:none;border-radius:10px;padding:11px;font-weight:700;cursor:pointer;font-size:15px;margin-top:8px}
+      .bcopy:hover{background:#333}
+
+      /* ④ leaderboard */
+      .lb-submit{background:#f7f9fc;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin:14px 0}
+      .lb-form{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+      .nick-input{flex:1;min-width:140px;padding:9px 12px;border:1px solid #ccc;border-radius:8px;font-size:14px;outline:none}
+      .nick-input:focus{border-color:#111}
+      .lb-ok{font-size:14px;margin-top:8px;color:#1a7a1a}
+      .my-rank{background:#fffde7;border:1px solid #f0d000;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-weight:700}
+      .lb-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+      .lb-table th{background:#f4f4f4;padding:8px 6px;text-align:left;border-bottom:2px solid #eee}
+      .lb-table td{padding:7px 6px;border-bottom:1px solid #f0f0f0}
+      .lb-you{background:#fffde7;font-weight:700}
+
+      /* ⑤ waitlist */
+      .waitlist-box{margin-top:12px}
+      .waitlist-label{font-weight:800;font-size:13px;color:#b8860b;margin-bottom:4px}
+      .waitlist-sub{font-size:12px;color:#666;margin-bottom:8px}
+      .waitlist-row{display:flex;gap:6px}
+      .waitlist-input{flex:1;padding:9px 10px;border:1.5px solid #d4af37;border-radius:8px;font-size:13px;outline:none;min-width:0}
+      .waitlist-input:focus{border-color:#b8860b}
+      .waitlist-err{font-size:12px;color:#c0392b;margin-top:5px}
+      .waitlist-ok{background:#f0fdf4;border:1px solid #5cb85c;border-radius:10px;padding:12px;font-size:13px;color:#1a7a1a;margin-top:12px;font-weight:600}
+
+      /* ⑤ premium */
+      .prem-header{text-align:center;margin-bottom:16px}
+      .prem-crown{font-size:32px;display:block;margin-bottom:4px}
+      .prem-compare{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}
+      .prem-col{background:#f8f8f8;border:1px solid #e0e0e0;border-radius:12px;padding:14px}
+      .prem-col.prem-highlight{background:#fffef0;border-color:#d4af37;box-shadow:0 2px 8px rgba(212,175,55,.2)}
+      .prem-tier{font-weight:800;font-size:13px;border-radius:999px;padding:3px 10px;display:inline-block;margin-bottom:10px}
+      .prem-tier.free{background:#e0e0e0;color:#555}
+      .prem-tier.premium{background:#d4af37;color:#111}
+      .prem-col ul{list-style:none;padding:0}
+      .prem-col li{font-size:13px;padding:4px 0;border-bottom:1px solid rgba(0,0,0,.05)}
+      .fortified-feat{color:#aaa;text-decoration:line-through}
+      .prem-price{font-size:24px;font-weight:900;margin-top:12px;color:#111}
+      .prem-price span{font-size:14px;font-weight:400;color:#666}
+      .prem-price-annual{font-size:12px;color:#888;margin-bottom:10px}
+      .btn-prem-cta{width:100%;background:#d4af37;color:#111;border:none;border-radius:10px;padding:12px;font-weight:800;font-size:15px;cursor:pointer;margin-top:4px}
+      .btn-prem-cta:hover{background:#c9a227}
+      .prem-note{text-align:center;font-size:12px;color:#888;line-height:1.5;margin-top:12px}
+
+      /* ── Responsive: PC (901px+) ─────────────────────────────────────── */
+      @media(min-width:901px){
+        .scol{position:sticky;top:10px}
+      }
+
+      /* ── Responsive: Tablet (601–900px) ──────────────────────────────── */
+      @media(max-width:900px){
+        .layout{grid-template-columns:1fr}
+        .board{grid-template-columns:repeat(7,44px);gap:4px}
+        .cell{width:44px;height:44px;font-size:15px;border-radius:7px}
+        .bwrap{padding:10px}
+        .hdr-l h1{font-size:18px}
+        .hdr-r{width:100%;justify-content:flex-end;flex-wrap:wrap;gap:6px}
+        .minput{width:46px;height:44px;font-size:20px}
+        .ba{padding:12px 8px;font-size:14px}
+        .scol{order:3}
+        .hist{max-height:200px}
+        .prem-compare{grid-template-columns:1fr}
+        .almost-box{margin-bottom:6px}
+      }
+
+      /* ── Responsive: Smartphone (≤600px) ─────────────────────────────── */
+      @media(max-width:600px){
+        .page{padding:6px 4px}
+        .hdr{flex-wrap:wrap;padding:8px 10px;gap:6px}
+        .hdr-l h1{font-size:16px;letter-spacing:1px}
+        .hdr-l .sub{font-size:10px}
+        .hdr-r{gap:4px}
+        .bsm{padding:5px 8px;font-size:12px}
+        .prem-btn{padding:5px 8px;font-size:12px}
+        .bprim{padding:7px 12px;font-size:13px}
+        .mode-box{display:none}
+
+        /* Board: fill screen width */
+        .board-wrap{padding:6px 2px}
+        .board{
+          grid-template-columns:repeat(7,calc((100vw - 32px) / 7));
+          gap:3px;
+          min-width:unset;
+          width:100%;
+        }
+        .cell{
+          width:calc((100vw - 32px) / 7);
+          height:calc((100vw - 32px) / 7);
+          font-size:clamp(11px,3vw,16px);
+          border-radius:6px;
+        }
+
+        /* Score bar */
+        .sbar{padding:6px 8px}
+        .stxt{font-size:13px}
+        .smid{font-size:11px}
+
+        /* Move controls: stack vertically, larger touch targets */
+        .mpanel{padding:10px 8px}
+        .mrow{flex-wrap:wrap;gap:6px}
+        .mlbl{font-size:12px}
+        .minput{width:52px;height:52px;font-size:22px;flex-shrink:0}
+        .pvbox{flex:1;min-width:120px}
+
+        /* Buttons: 2×2 grid on small screens */
+        .brow{
+          display:grid;
+          grid-template-columns:1fr 1fr;
+          gap:8px;
+          padding:8px;
+        }
+        .ba{
+          padding:14px 8px;
+          font-size:14px;
+          min-height:48px;
+          border-radius:10px;
+        }
+        .bsubmit{grid-column:1 / -1}
+
+        /* Side panel below board */
+        .scol{order:3;margin-top:8px}
+        .panel{margin-bottom:8px}
+        .almost-box{font-size:12px}
+        .almost-chip{font-size:11px;padding:2px 7px}
+
+        /* History compact */
+        .hist{max-height:160px}
+        .hi{padding:6px 8px}
+        .hw{font-size:13px}
+
+        /* First-move banner */
+        .firstmove-banner{font-size:12px;padding:8px 10px}
+
+        /* Tutorial: hide less critical elements */
+        .rules-box{font-size:13px}
+      }
+
+      /* ── Responsive: Very small (≤360px) ─────────────────────────────── */
+      @media(max-width:360px){
+        .board{grid-template-columns:repeat(7,calc((100vw - 20px) / 7));gap:2px}
+        .cell{
+          width:calc((100vw - 20px) / 7);
+          height:calc((100vw - 20px) / 7);
+          font-size:10px;
+          border-radius:5px;
+        }
+        .ba{font-size:13px;padding:12px 6px}
+      }
+    `}</style>
+  </>;
+}
