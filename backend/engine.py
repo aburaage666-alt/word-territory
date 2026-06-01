@@ -690,6 +690,21 @@ def generate_letter_market(state: GameState) -> tuple[list[str], list[str]]:
     scores = _score_all_letters(state)
     playable = {l: s for l, s in scores.items() if s["words"] > 0}
 
+    # Comeback bias: losing by 6+ → Almost-completing letters boosted
+    try:
+        gap = get_score_gap(state, state.currentPlayer)
+        if gap >= 6:
+            almost_cb = find_almost_words(state, limit=8)
+            for a in almost_cb:
+                l = a["needs"]
+                if l not in board_letters and l not in playable:
+                    playable[l] = {"words": 1, "gain": 3, "best_word": "", "power": False, "is_vowel": l in VOWELS}
+                elif l in playable:
+                    playable[l] = dict(playable[l])
+                    playable[l]["gain"] = max(playable[l]["gain"], 4)
+    except Exception:
+        pass
+
     def pick(pool_dict, key_fn, exclude):
         candidates = [(l, s) for l, s in pool_dict.items() if l not in exclude]
         if not candidates:
@@ -722,16 +737,21 @@ def generate_letter_market(state: GameState) -> tuple[list[str], list[str]]:
         if p2:
             active.append(p2); used.add(p2)
 
-    # Slot 2: SETUP — Almost-guided (future value)
-    try:
-        almost = find_almost_words(state, limit=10)
-        setup_candidates = [a["needs"] for a in almost
-                            if a["needs"] not in board_letters and a["needs"] not in used]
-        if setup_candidates:
-            setup = setup_candidates[0]
-            active.append(setup); used.add(setup)
-    except Exception:
-        pass
+    # Slot 2: SETUP — try 3rd playable first, then Almost-guided
+    third_playable = pick(playable, lambda s: s["words"] + s["gain"], used)
+    if third_playable:
+        active.append(third_playable); used.add(third_playable)
+    else:
+        try:
+            almost = find_almost_words(state, limit=10)
+            setup_candidates = [a["needs"] for a in almost
+                                if a["needs"] not in board_letters and a["needs"] not in used]
+            if setup_candidates:
+                active.append(setup_candidates[0]); used.add(setup_candidates[0])
+            else:
+                active.append(weighted_pick(used)); used.add(active[-1])
+        except Exception:
+            active.append(weighted_pick(used)); used.add(active[-1])
 
     # Fill any remaining slots
     while len(active) < 3:
@@ -1420,6 +1440,18 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str, advance_m
     temp.lastFortifiedCells = []
     temp.lastComboLabels = []
     temp.synergyState = update_synergy_state(temp, [], is_seed=True)
+    # Seed cost: opponent +1T (unless SEED_TACTICIAN or player has ≤2 cells)
+    my_cells = sum(1 for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)
+                   if temp.board[r][c].owner == player)
+    if state.selectedSynergy != "SEED_TACTICIAN" and my_cells > 2:
+        import random as _r
+        opp = other_player(player)
+        give_cells = [(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)
+                      if temp.board[r][c].letter and temp.board[r][c].owner == player
+                      and not temp.board[r][c].fortified]
+        if give_cells:
+            _r.shuffle(give_cells)
+            temp.board[give_cells[0][0]][give_cells[0][1]].owner = opp
     item = MoveHistoryItem(
         turn=state.turn,
         player=player,
@@ -1486,6 +1518,14 @@ def preview_move(state: GameState, row: int, col: int, letter: str, path) -> Pre
         return response
     except Exception as exc:
         return PreviewMoveResponse(errorMessage=str(exc))
+
+
+def get_score_gap(state: GameState, player: str) -> int:
+    """Return how many cells player is behind (positive = losing)."""
+    opp = "BLUE" if player == "RED" else "RED"
+    my_t  = sum(1 for r in state.board for c in r if c.owner == player)
+    opp_t = sum(1 for r in state.board for c in r if c.owner == opp)
+    return opp_t - my_t
 
 
 def is_game_over(state: GameState) -> bool:
