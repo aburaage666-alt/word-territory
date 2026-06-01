@@ -115,6 +115,52 @@ export async function getLetterPreview(gameId, letter) {
   }
 }
 
+export async function getThreat(gameId) {
+  if (!gameId) return [];
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/threat`, {}, 5000);
+    const data = await readJson(res);
+    return data.threats || [];
+  } catch { return []; }
+}
+
+export async function createAsyncMatch(options = {}) {
+  const res = await fetchWithTimeout(`${API_BASE}/async/games`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ botLevel: options.botLevel || "normal" }),
+  });
+  return readJson(res);
+}
+
+export async function getAsyncMatch(gameId, token) {
+  const res = await fetchWithTimeout(`${API_BASE}/async/games/${gameId}?token=${encodeURIComponent(token)}`);
+  return readJson(res);
+}
+
+export async function submitAsyncMove(gameId, token, payload) {
+  const res = await fetchWithTimeout(`${API_BASE}/async/games/${gameId}/move?token=${encodeURIComponent(token)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return readJson(res);
+}
+
+export async function seedAsyncMove(gameId, token, payload) {
+  const res = await fetchWithTimeout(`${API_BASE}/async/games/${gameId}/seed-move?token=${encodeURIComponent(token)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return readJson(res);
+}
+
+export async function passAsyncTurn(gameId, token) {
+  const res = await fetchWithTimeout(`${API_BASE}/async/games/${gameId}/pass?token=${encodeURIComponent(token)}`, { method: "POST" });
+  return readJson(res);
+}
+
 export async function getAlmost(gameId) {
   try {
     const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/almost`, {}, 5000);
