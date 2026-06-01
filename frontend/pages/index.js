@@ -64,7 +64,7 @@ function buildShare(num, ds, r) {
   const capturePct = Math.round((r.redScore / totalCells) * 100);
   const rank = getRank(capturePct);
   const rankEmoji = getRankEmoji(capturePct);
-  const result = r.winner === "RED" ? "WIN 🎉" : r.winner === null ? "DRAW 🤝" : "LOSS 😤";
+  const result = r.winner === "RED" ? "WIN 🎉" : r.winner === "DRAW" ? "DRAW 🤝" : "LOSS 😤";
   const emojiBoard = r.emojiBoard || "";
 
   return [
@@ -317,6 +317,11 @@ export default function Home() {
   const [showPremium, setPremium] = useState(false);
   const [showLB,      setShowLB]  = useState(false);  // ④
 
+  // Synergy card UI state
+  const [showSynergy, setShowSynergy] = useState(false);
+  const [synergyOpts, setSynergyOpts] = useState([]);
+  const [synergy,     setSynergy]     = useState("");
+
   // Combo banner persistence
   const [comboBanner, setCombo]   = useState([]);
   const [synergyFlash, setSynergyFlash] = useState("");
@@ -365,6 +370,7 @@ export default function Home() {
     setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null);
     setSum(false); setCopied(false); setShareText(""); setNickname(""); setMyRank(null);
     setSubmitted(false); summaryFired.current = false;
+    setShowSynergy(false); setSynergyOpts([]); setSynergy("");
   }
   async function boot(m = mode) {
     let lastErr;
@@ -439,7 +445,7 @@ export default function Home() {
   // ── bot auto-move ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state || !gameId) return;
-    if (state.winner !== undefined && state.winner !== "") return;  // any winner incl. DRAW
+    if (state.winner) return;  // stop bot after RED/BLUE/DRAW
     if (state.currentPlayer !== state.botPlayer) return;
     let cancelled = false;
     const run = async () => {
@@ -530,7 +536,7 @@ export default function Home() {
   }, [placed]);
 
   // ── board helpers ────────────────────────────────────────────────────────
-  const human = () => state && !thinking && !state.winner && state.winner !== null && state.currentPlayer !== state.botPlayer;
+  const human = () => state && !thinking && !state.winner && state.currentPlayer !== state.botPlayer;
   const isSel = (r,c) => path.some(p => p.row===r && p.col===c);
 
   // Opponent cells adjacent to any placeable empty cell = attackable
