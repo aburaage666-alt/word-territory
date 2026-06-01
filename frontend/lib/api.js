@@ -73,6 +73,11 @@ export async function botMove(gameId) {
   return readJson(res);
 }
 
+export async function autoMove(gameId) {
+  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/auto-move`, { method: "POST" });
+  return readJson(res);
+}
+
 export async function getSynergyOptions(gameId) {
   try {
     const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/synergy-options`, {}, 5000);
