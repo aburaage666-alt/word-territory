@@ -1689,7 +1689,7 @@ export default function Home() {
       )}
 
       {showLB&&<LeaderboardModal onClose={()=>setShowLB(false)} dailyInfo={dailyInfo} myRank={myRank}/>}
-      {showPremium&&<PremiumModal onClose={()=>setPremium(false)}/>}
+
     </main>
 
     <style jsx global>{`
