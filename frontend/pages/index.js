@@ -19,6 +19,19 @@ const tScoreWord = (st, p) => !st ? 0 : p === "RED"
   ? st.scores.redWord : st.scores.blueWord;
 const wScore = w => ({ 3:1,4:2,5:3,6:5 }[w?.length] || 0);
 
+const OPENING_NOTES = {
+  "CIRCLE OPENING": "Encircle and Capture — surround to win.",
+  "BRIDGE OPENING": "Connect and Divide — control the center bridge.",
+  "GARDEN OPENING": "Expand and Lock — fortify before they do.",
+  "STONE OPENING": "Hold the center — build safe locked ground.",
+  "RIVER OPENING": "Flow outward — connect lanes before they split.",
+  "LIGHT OPENING": "Fast expansion — claim open paths quickly.",
+  "WATER OPENING": "Flexible paths — shift between attack and defense.",
+  "PLANT OPENING": "Grow from roots — expand and secure territory.",
+  "FOREST OPENING": "Branching paths — create multiple threats.",
+  "MARKET OPENING": "Frontline trading — every tile can flip momentum."
+};
+
 const TERRAIN_LABELS = {
   "CAPTURE": "Capture",
   "DOUBLE CAPTURE": "Double Capture",
@@ -188,7 +201,7 @@ function updateStreak(dateStr) {
 }
 
 // ── Cell ──────────────────────────────────────────────────────────────────────
-function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, bridgePath, lockNeighbor, disabled, gen, attack, inPath, threat, threatMove, captureOrder, lockOrder, onClick }) {
+function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, bridgePath, lockNeighbor, tutorialPlace, tutorialPath, disabled, gen, attack, inPath, threat, threatMove, captureOrder, lockOrder, onClick }) {
   const cls = ["cell",
     cell.owner === "RED" ? "cr" : cell.owner === "BLUE" ? "cb" : "",
     cell.fortified ? "ft" : "", sel ? "sl" : "", placed ? "pl" : "",
@@ -196,11 +209,14 @@ function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, bridgePa
     attack ? "atk" : "",   // opponent cell that can be attacked
     threat ? "threat" : "", threatMove ? "threatMove" : "",
     bridgePath ? "bridge-path" : "", lockNeighbor ? "lock-neighbor" : "",
+    tutorialPlace ? "tut-pulse tut-cell" : "", tutorialPath ? "tut-arrow-cell" : "",
     inPath ? "inpath" : "", // opponent cell currently in selected path (will be captured)
   ].filter(Boolean).join(" ");
   const animStyle = {
     "--cap-order": captureOrder != null ? captureOrder : 0,
     "--cap-delay": captureOrder != null ? `${captureOrder * 80}ms` : "0ms",
+    "--my-color": cell.owner === "RED" ? "rgba(220,38,38,.42)" : cell.owner === "BLUE" ? "rgba(37,99,235,.42)" : "#fafafa",
+    "--opp-color": cell.owner === "RED" ? "rgba(37,99,235,.36)" : cell.owner === "BLUE" ? "rgba(220,38,38,.36)" : "#fafafa",
     "--lock-delay": lockOrder != null ? `${lockOrder * 70}ms` : "0ms",
   };
   return (
@@ -406,7 +422,6 @@ export default function Home() {
   const [showTutorial, setShowTutorial] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(0);
   const [soundOn, setSoundOn] = useState(true);
-  const [bridgeFlash, setBridgeFlash] = useState(false);
   const comboTimer = useRef(null);
   const soundTurnRef = useRef(null);
   const captureSoundRef = useRef(null);
@@ -601,7 +616,7 @@ export default function Home() {
     try {
       setError("");
       setBootMsg("Preparing spectator demo…");
-      const d = await createGame({ botLevel: "strong" });
+      const d = await createGame({ botLevel: "strong", showcase: true, spectatorSeed: 42 });
       setGameId(d.game_id);
       setState(d.state);
       setDailyMode(false);
@@ -694,10 +709,6 @@ export default function Home() {
       setCombo(c);
       if (comboTimer.current) clearTimeout(comboTimer.current);
       comboTimer.current = setTimeout(() => setCombo([]), 3500);
-      if (c.some(l => l === "BRIDGE" || l === "BRIDGE MASTER")) {
-        setBridgeFlash(true);
-        setTimeout(() => setBridgeFlash(false), 900);
-      }
     }
   }, [state?.turn]);
 
@@ -1078,6 +1089,24 @@ export default function Home() {
     return s;
   }, [JSON.stringify(state?.lastFortifiedCells || [])]);
 
+  const tutorialPlaceKey = useMemo(() => {
+    if (!showTutorial || tutorialStep !== 1) return "";
+    const firstLegal = legalCells[0];
+    return firstLegal ? asKey(firstLegal[0], firstLegal[1]) : "";
+  }, [showTutorial, tutorialStep, JSON.stringify(legalCells)]);
+  const tutorialPathKey = useMemo(() => {
+    if (!showTutorial || tutorialStep !== 2 || !placed) return "";
+    const last = (path && path.length > 0 ? path[path.length - 1] : placed);
+    const candidates = [
+      [last.row+1,last.col],[last.row-1,last.col],[last.row,last.col+1],[last.row,last.col-1],
+      [placed.row+1,placed.col],[placed.row-1,placed.col],[placed.row,placed.col+1],[placed.row,placed.col-1]
+    ];
+    for (const [r,c] of candidates) {
+      if (r>=0 && r<7 && c>=0 && c<7 && state?.board?.[r]?.[c]?.letter) return asKey(r,c);
+    }
+    return "";
+  }, [showTutorial, tutorialStep, placed?.row, placed?.col, path.length, state?.turn]);
+
 
   // ── small WebAudio cues: capture / synergy ─────────────────────────────
   useEffect(() => {
@@ -1146,20 +1175,10 @@ export default function Home() {
         </div>
       )}
       {showTutorial && !showIntro && !spectatorMode && !state?.winner && (
-        <div className="tutorial-card">
-          <div className="tutorial-head">
-            <span>First move tutorial</span>
-            <button onClick={finishTutorial}>Skip</button>
-          </div>
-          <div className="tutorial-copy">
-            {tutorialStep===0 && <>1/4 · Choose one tile from <strong>Letter Market</strong>.</>}
-            {tutorialStep===1 && <>2/4 · Tap a <strong>glowing green cell</strong> to place it.</>}
-            {tutorialStep===2 && <>3/4 · Connect adjacent letters to make a <strong>3–6 letter word</strong>.</>}
-            {tutorialStep===3 && <>4/4 · Press <strong>Submit</strong> and watch territory change.</>}
-          </div>
-          <div className="tutorial-dots">
-            {[0,1,2,3].map(i => <span key={i} className={i===tutorialStep ? "on" : ""}/>) }
-          </div>
+        <div className="tutorial-mini">
+          <strong>First move</strong>
+          <span>{tutorialStep===0 ? "Choose this letter." : tutorialStep===1 ? "Tap a glowing tile." : tutorialStep===2 ? "Connect a word path." : "Capture Word."}</span>
+          <button onClick={finishTutorial}>Skip</button>
         </div>
       )}
       {/* ── header ── */}
@@ -1167,6 +1186,7 @@ export default function Home() {
         <div className="hdr-l">
           <h1>WORD TERRITORY{dailyMode&&dailyInfo&&<span className="dpill">Daily #{dailyInfo.dayNumber}</span>}</h1>
           <p className="sub">Opening: {state.openingName} · {spectatorMode ? `Spectator Mode · ${state.botStyle || "Raider"} duel` : asyncMode ? `Async PvP · You are ${asyncRole}` : `Bot: ${state.botStyle || "Raider"}`} · {spectatorMode ? "Bot vs Bot" : thinking?"Bot thinking…":asyncMode ? (state.currentPlayer===asyncRole?`Your turn (${asyncRole})`:`Waiting for ${state.currentPlayer}`) : state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
+          <p className="opening-note">{OPENING_NOTES[state.openingName] || "Words become territory. Each move reshapes the map."}</p>
           <p className="tagline">Words become territory. Each move reshapes the map.</p>
         </div>
         <div className="hdr-r">
@@ -1272,10 +1292,7 @@ export default function Home() {
         <div className="bcol">
           {/* board */}
           <div className="bwrap">
-            {state.winner && state.winner !== "" && (
-              <div className={`end-flood ${state.winner === "RED" ? "flood-red" : state.winner === "BLUE" ? "flood-blue" : "flood-draw"}`} key={`flood-${state.winner}`}/>
-            )}
-            <div className="board-wrap"><div className={`board ${spectatorMode ? "board-demo" : ""} ${lastMoveIsSwing ? "board-swing" : ""} ${bridgeFlash ? "board-bridge" : ""}`}>
+            <div className="board-wrap"><div className={`board ${spectatorMode ? "board-demo" : ""} ${lastMoveIsSwing ? "board-swing" : ""}`}>
               {state.board.map(row=>row.map(cell=>{
                 const k=asKey(cell.row,cell.col);
                 const vp = Array.isArray(valuePrev)
@@ -1288,6 +1305,7 @@ export default function Home() {
                     legal={!placed&&isLegal(cell.row,cell.col)}
                     changed={changedS.has(k)} captured={capturedS.has(k)} lockedNow={lockedS.has(k)}
                     bridgePath={bridgePathSet.has(k)} lockNeighbor={lockNeighborSet.has(k)}
+                    tutorialPlace={tutorialPlaceKey === k} tutorialPath={tutorialPathKey === k}
                     captureOrder={capturedOrderMap.get(k)} lockOrder={lockedOrderMap.get(k)}
                     disabled={isDim(cell.row,cell.col)} gen={animGen}
                     attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
@@ -1345,7 +1363,7 @@ export default function Home() {
           {!state.winner && (
             <div className="lm-panel" style={{display: market.active.length > 0 ? 'block' : 'none'}}>
               <div className="lm-header">
-                <span className="lm-title">🎴 Letter Market</span>
+                <span className="lm-title">🎴 Letter Market {comebackChance && <b className="come-badge">★ Comeback</b>}</span>
                 <span className="lm-preview">
                   Next: {(market.preview||[]).map((l,i) => <span key={i} className="lm-prev-chip">{l}</span>)}
                 </span>
@@ -1354,7 +1372,7 @@ export default function Home() {
                 {(market.active||[]).map((ltr,i) => {
                   const s = (market.stats||[]).find(x => x.letter === ltr) || {letter:ltr, wordCount:0, bestGain:0, bestWord:'', roles:[]};
                   return <button key={`${ltr}-${i}`}
-                    className={`lm-tile ${letter===ltr ? 'lm-selected' : ''}`}
+                    className={`lm-tile ${letter===ltr ? 'lm-selected' : ''} ${showTutorial && tutorialStep===0 && i===0 ? 'tut-pulse tut-target' : ''}`}
                     onClick={() => {
                       if (state?.winner) return;
                       playSfx("click");
@@ -1370,6 +1388,7 @@ export default function Home() {
                     disabled={!human()}
                     title={s.bestWord ? `Best Swing: ${s.bestWord} · Territory Swing +${s.bestGain}` : 'Setup / no direct word'}
                   >
+                    {showTutorial && tutorialStep===0 && i===0 && <span className="tut-bubble tut-lm">Choose this</span>}
                     <span className="lm-letter">{ltr}</span>
                     {s.wordCount > 0 ? (
                       <span className="lm-stats">
@@ -1483,7 +1502,7 @@ export default function Home() {
               </div>
             </div>
             <div className="brow">
-              <button className="ba bsubmit" onClick={submit} disabled={!human()}>{ok ? "Claim Territory ⚔" : "Submit"}</button>
+              <button className={`ba bsubmit ${showTutorial && tutorialStep===3 ? "tut-pulse tut-submit" : ""}`} onClick={submit} disabled={!human()}>{showTutorial && tutorialStep===3 ? "Capture Word ⚔" : ok ? "Claim Territory ⚔" : "Submit"}</button>
               {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()} title={state?.selectedSynergy==="SEED_TACTICIAN" ? "Seed (free — +3T next word)" : "Seed (opponent +1T)"}>
               Seed{state?.selectedSynergy!=="SEED_TACTICIAN" && <span style={{fontSize:10,color:"#e63946",marginLeft:3}}>-1T</span>}
             </button>}
@@ -1502,8 +1521,8 @@ export default function Home() {
             </div>
           ) : null; })()}
           {almost.length > 0 && (
-            <div className="almost-box">
-              <div className="almost-title">🀄 Almost — place one letter to make:</div>
+            <div className={`almost-box ${comebackChance ? "comeback-box" : ""}`}>
+              <div className="almost-title">{comebackChance ? "🔥 Comeback chance! One letter can swing the map:" : "🀄 Almost — place one letter to make:"}</div>
               <div className="almost-list">
                 {almost.map((a,i) => (
                   <span key={i} className="almost-chip">
@@ -1735,7 +1754,7 @@ export default function Home() {
 
       /* board */
       .bwrap{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px;overflow-x:auto}
-      .board-wrap{position:relative;width:100%;overflow-x:auto;display:flex;justify-content:center;-webkit-overflow-scrolling:touch}
+      .board-wrap{width:100%;overflow-x:auto;display:flex;justify-content:center;-webkit-overflow-scrolling:touch}
       .board{display:grid;grid-template-columns:repeat(7,58px);gap:5px;justify-content:center;min-width:max-content}
       .board.board-swing{animation:boardpulse 900ms ease both}
       .cell-slot{position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center}
@@ -1769,14 +1788,23 @@ export default function Home() {
       .what-summary span{background:#fff;border:1px solid #e2e8f0;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800;color:#334155}
       .report-emoji{font-size:16px;line-height:1.18;background:#0f172a;color:#fff;border-radius:12px;padding:10px;margin:10px 0 0;letter-spacing:1px;display:inline-block}
       .report-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-
-
-      .tutorial-card{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:80;background:#111827;color:#fff;border:1px solid rgba(255,255,255,.18);box-shadow:0 12px 36px rgba(15,23,42,.35);border-radius:16px;padding:13px 16px;width:min(520px,calc(100% - 28px))}
-      .tutorial-head{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#cbd5e1;font-weight:900;margin-bottom:7px}
-      .tutorial-head button{border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.08);color:#fff;border-radius:999px;padding:4px 10px;font-weight:800;cursor:pointer}
-      .tutorial-copy{font-size:14px;line-height:1.45;font-weight:700}.tutorial-copy strong{color:#fde68a}
-      .tutorial-dots{display:flex;gap:5px;margin-top:9px}.tutorial-dots span{width:8px;height:8px;border-radius:99px;background:#475569}.tutorial-dots span.on{background:#facc15;width:18px}
       .sound-toggle{min-width:84px}
+
+      .opening-note{font-size:12px;color:#4c1d95;font-weight:800;margin-top:3px}
+      .come-badge{display:inline-block;margin-left:6px;background:#fef3c7;color:#92400e;border:1px solid #f59e0b;border-radius:999px;padding:2px 7px;font-size:10px;vertical-align:middle}
+      .comeback-box{border-color:#f59e0b!important;background:linear-gradient(90deg,#fff7ed,#fff)!important}
+      .comeback-box .almost-title{color:#b45309;font-weight:900}
+      .tutorial-mini{position:fixed;left:50%;top:78px;transform:translateX(-50%);z-index:80;background:#111827;color:#fff;border:1px solid rgba(255,255,255,.18);box-shadow:0 10px 32px rgba(15,23,42,.28);border-radius:999px;padding:8px 12px;display:flex;align-items:center;gap:10px;font-size:13px}
+      .tutorial-mini strong{color:#fde68a}.tutorial-mini span{color:#e5e7eb}.tutorial-mini button{border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.08);color:#fff;border-radius:999px;padding:3px 8px;font-weight:800;cursor:pointer}
+      .tut-pulse{animation:tutPulse 950ms ease-in-out infinite!important;position:relative;z-index:30}
+      .tut-target{border-color:#f59e0b!important;box-shadow:0 0 0 4px rgba(245,158,11,.18),0 0 18px rgba(245,158,11,.32)!important}
+      .tut-submit{box-shadow:0 0 0 4px rgba(245,158,11,.25),0 0 22px rgba(245,158,11,.36)!important}
+      .tut-bubble{position:absolute;background:#111827;color:#fff;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:900;white-space:nowrap;z-index:45;box-shadow:0 6px 18px rgba(15,23,42,.24);pointer-events:none}
+      .tut-lm{top:-18px;left:50%;transform:translateX(-50%)}
+      .tut-board{top:-22px;left:50%;transform:translateX(-50%)}
+      .tut-arrow-cell::after,.tut-cell::after{content:"";position:absolute;left:50%;top:-9px;transform:translateX(-50%);border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid #111827;z-index:44}
+      @keyframes tutPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+
 
       /* ── Letter Market ─────────────────────────────────────────────────── */
       .lm-panel{background:#fff;border:1.5px solid #e0e0e0;border-radius:14px;padding:10px 14px;margin-bottom:10px}
@@ -1897,14 +1925,9 @@ export default function Home() {
       .atk-dot{position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:rgba(255,140,0,.9);pointer-events:none}
       .pvcap{color:#e65c00;font-weight:800;font-size:13px}
       @keyframes ainpath{0%{box-shadow:inset 0 0 0 3px #e65c00}100%{box-shadow:inset 0 0 0 3px #ff8c00}}
-      @keyframes abridge{0%{box-shadow:inset 0 0 0 0 rgba(29,155,117,0)}40%{box-shadow:inset 0 0 0 6px rgba(29,155,117,.55)}100%{box-shadow:inset 0 0 0 0 rgba(29,155,117,0)}}
-      .board-bridge{animation:abridge 900ms ease forwards}
-      @keyframes aflood{0%{opacity:0;transform:scale(.94)}30%{opacity:.18}70%{opacity:.22}100%{opacity:0;transform:scale(1.04)}}
-      .end-flood{position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:20;animation:aflood 2.4s ease forwards}
-      .flood-red{background:#e63946}.flood-blue{background:#1d3557}.flood-draw{background:#555}
       @keyframes aclaim{0%{transform:scale(1.12)}100%{transform:scale(1)}}
       @keyframes boardpulse{0%{transform:scale(1);filter:saturate(1)}35%{transform:scale(1.018);filter:saturate(1.28)}100%{transform:scale(1);filter:saturate(1)}}
-      @keyframes acap{0%{transform:scale(.92);filter:saturate(1);box-shadow:0 0 0 0 rgba(250,204,21,0)}35%{transform:scale(1.18);background:#fde68a;filter:saturate(1.9);box-shadow:0 0 0 6px rgba(250,204,21,.28)}70%{transform:scale(.96);box-shadow:0 0 0 2px rgba(250,204,21,.14)}100%{transform:scale(1)}}
+      @keyframes acap{0%{transform:scale(.95);background:var(--opp-color);filter:saturate(1);box-shadow:0 0 0 0 rgba(250,204,21,0)}45%{transform:scale(1.16);background:#fde68a;filter:saturate(2.2);box-shadow:0 0 0 6px rgba(250,204,21,.32),0 0 18px rgba(250,204,21,.52)}100%{transform:scale(1);background:var(--my-color);filter:saturate(1.15)}}35%{transform:scale(1.18);background:#fde68a;filter:saturate(1.9);box-shadow:0 0 0 6px rgba(250,204,21,.28)}70%{transform:scale(.96);box-shadow:0 0 0 2px rgba(250,204,21,.14)}100%{transform:scale(1)}}
       @keyframes alk{0%{box-shadow:0 0 0 8px #111 inset,0 0 0 0 rgba(17,17,17,.7);transform:scale(1.08)}45%{box-shadow:0 0 0 3px #111 inset,0 0 0 8px rgba(17,17,17,.12);transform:scale(.98)}100%{transform:scale(1)}}
 
       /* move panel */
