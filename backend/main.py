@@ -9,8 +9,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi import Request
-from starlette.middleware.base import BaseHTTPMiddleware
-import traceback
 
 # ── SQLite persistence ────────────────────────────────────────────────────────
 DB_PATH = Path(__file__).parent / "data.db"
@@ -105,37 +103,78 @@ from models import (
 
 app = FastAPI(title="Word Territory API")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://word-territory1.onrender.com",
-        "http://localhost:3000",   # local dev
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORSMiddleware replaced by ForceCORSMiddleware above (handles 500 errors too)
 
-# ── CORS-safe exception handler ─────────────────────────────────────────────
-# FastAPI's CORSMiddleware does NOT add headers to unhandled 500 errors.
-# This handler ensures CORS headers are present even when the server crashes.
-CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "https://word-territory1.onrender.com",
-    "Access-Control-Allow-Credentials": "true",
-    "Access-Control-Allow-Methods": "*",
-    "Access-Control-Allow-Headers": "*",
+# ── Bulletproof CORS + error middleware ──────────────────────────────────────
+# CORSMiddleware does NOT add headers to unhandled 500 errors in sync routes.
+# This raw ASGI middleware fires unconditionally before everything else.
+
+ALLOWED_ORIGINS = {
+    "https://word-territory1.onrender.com",
+    "http://localhost:3000",
 }
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    tb = traceback.format_exc()
-    print(f"[ERROR] {request.method} {request.url}\n{tb}", flush=True)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error", "path": str(request.url)},
-        headers=CORS_HEADERS,
-    )
+class ForceCORSMiddleware:
+    """Raw ASGI middleware: adds CORS headers to EVERY response, including 500s."""
+    def __init__(self, app):
+        self.app = app
 
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        origin = ""
+        for k, v in scope.get("headers", []):
+            if k == b"origin":
+                origin = v.decode()
+                break
+
+        cors_headers = []
+        if origin in ALLOWED_ORIGINS:
+            cors_headers = [
+                (b"access-control-allow-origin",      origin.encode()),
+                (b"access-control-allow-credentials", b"true"),
+                (b"access-control-allow-methods",     b"*"),
+                (b"access-control-allow-headers",     b"*"),
+            ]
+
+        # Handle preflight
+        if scope["type"] == "http" and scope.get("method") == "OPTIONS":
+            await send({"type": "http.response.start", "status": 204,
+                        "headers": cors_headers})
+            await send({"type": "http.response.body", "body": b""})
+            return
+
+        started = []
+
+        async def send_with_cors(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                # Remove any existing CORS headers (avoid duplicates)
+                headers = [(k, v) for k, v in headers
+                           if not k.lower().startswith(b"access-control-")]
+                headers.extend(cors_headers)
+                message = {**message, "headers": headers}
+                started.append(True)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_cors)
+        except Exception as exc:
+            import traceback as _tb
+            print(f"[ASGI ERROR] {_tb.format_exc()}", flush=True)
+            body = b'{"detail":"Internal server error"}' 
+            hdrs = [(b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode())]
+            hdrs.extend(cors_headers)
+            if not started:
+                await send({"type": "http.response.start", "status": 500,
+                             "headers": hdrs})
+                await send({"type": "http.response.body", "body": body})
+
+
+app.add_middleware(ForceCORSMiddleware)
 GAMES: dict[str, GameState] = {}
 
 # In-memory daily leaderboard. Resets on server restart.
