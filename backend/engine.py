@@ -704,6 +704,68 @@ def _score_all_letters(state: GameState) -> dict:
     return scores
 
 
+
+def _comeback_letter_candidates(state: GameState, exclude: set | None = None, limit: int = 6) -> list[str]:
+    """Return letters that can create an actual comeback chance.
+
+    Used only when the current player is behind. Preference:
+    capture / bridge / synergy-capable moves > high territory swing > almost words.
+    Rare letters are excluded because comeback should feel helpful, not cruel.
+    """
+    exclude = exclude or set()
+    rare = {'Q', 'X', 'Z', 'J'}
+    board_letters = board_letters_set(state)
+    letters = []
+
+    # Start from Almost needs because the UI already teaches this.
+    try:
+        for a in find_almost_words(state, limit=18):
+            l = str(a.get("needs", "")).upper()
+            if l and l not in board_letters and l not in rare and l not in exclude:
+                letters.append(l)
+    except Exception:
+        pass
+
+    # Add common high-frequency letters as backup.
+    for l in "ETAOINSHRDLUCMFWYPGBVK":
+        if l not in board_letters and l not in rare and l not in exclude:
+            letters.append(l)
+
+    seen, scored = set(), []
+    for l in letters:
+        if l in seen:
+            continue
+        seen.add(l)
+        try:
+            moves = _fast_bot_moves_for_letter(state, l, max_results=10, excluded=set(state.usedWords))
+        except Exception:
+            moves = []
+        best = 0
+        for m in moves:
+            try:
+                ns = simulate_move(state, m)
+                last = ns.moveHistory[-1]
+                labels = last.comboLabels or []
+                val = 0
+                val += last.territoryGained * 2
+                val += last.captureCount * 10
+                val += last.fortifiedCellsGained * 3
+                val += 9 if "BRIDGE" in labels else 0
+                val += 6 if "DOUBLE CAPTURE" in labels else 0
+                val += 6 if any(str(x).startswith("SYNERGY") for x in labels) else 0
+                val += min(6, word_score(m.get("word", "")))
+                best = max(best, val)
+            except Exception:
+                best = max(best, len(m.get("word", "")) if isinstance(m, dict) else 0)
+        # Keep true Almost letters even if quick simulation is weak.
+        if best == 0:
+            best = 2
+        scored.append((best, l))
+
+    scored.sort(reverse=True)
+    return [l for _, l in scored[:limit]]
+
+
 def generate_letter_market(state: GameState) -> tuple[list[str], list[str]]:
     """
     3-slot Letter Market:
@@ -805,6 +867,26 @@ def generate_letter_market(state: GameState) -> tuple[list[str], list[str]]:
                     break
         except Exception:
             pass
+
+    # Strong comeback intervention: when a human/player is losing badly,
+    # one market tile must be a real comeback letter, not just a label.
+    try:
+        gap = get_score_gap(state, state.currentPlayer)
+        if gap >= 6:
+            cb_letters = _comeback_letter_candidates(state, exclude=set(), limit=6)
+            if cb_letters:
+                # Prefer replacing the weakest/rarest slot. Never keep J/Q/X/Z as a "comeback" tile.
+                rare = {'Q', 'X', 'Z', 'J'}
+                replace_idx = 0
+                for i, l in enumerate(active):
+                    if l in rare or l not in playable:
+                        replace_idx = i
+                        break
+                chosen = next((l for l in cb_letters if l not in set(active)), cb_letters[0])
+                active[replace_idx] = chosen
+                used = set(active)
+    except Exception:
+        pass
 
     # Ensure at least 1 vowel in active 3
     if not any(l in VOWELS for l in active):
@@ -1481,6 +1563,16 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str, advance_m
     temp = deepcopy(state)
     player = state.currentPlayer
     temp.board[row][col].letter = letter.upper()
+    # Last Stand: if a player has almost no territory, seed becomes a reclaim move.
+    # This prevents the psychologically dead "0 cells" state from feeling hopeless.
+    try:
+        pre_cells = sum(1 for rr in range(BOARD_SIZE) for cc in range(BOARD_SIZE)
+                        if state.board[rr][cc].owner == player)
+        if pre_cells <= 2:
+            temp.board[row][col].owner = player
+            temp.board[row][col].fortified = False
+    except Exception:
+        pass
     temp.currentPlayer = other_player(player)
     temp.turn += 1
     temp.consecutivePasses = 0
@@ -1501,10 +1593,11 @@ def apply_seed_move(state: GameState, row: int, col: int, letter: str, advance_m
         if give_cells:
             _r.shuffle(give_cells)
             temp.board[give_cells[0][0]][give_cells[0][1]].owner = opp
+    seed_word = "LAST STAND" if sum(1 for rr in range(BOARD_SIZE) for cc in range(BOARD_SIZE) if state.board[rr][cc].owner == player) <= 2 else "SEED"
     item = MoveHistoryItem(
         turn=state.turn,
         player=player,
-        word="SEED",
+        word=seed_word,
         moveType="SEED",
         placedRow=row,
         placedCol=col,
@@ -1800,17 +1893,33 @@ def choose_bot_move(state: GameState):
         if not moves:
             return None
         player = state.currentPlayer
+        # positive if bot/current player is already ahead
+        lead = -get_score_gap(state, player)
         def quick_score(m):
             try:
                 ns = simulate_move(state, m)
                 base = evaluate_state_for_player(ns, player)
                 last = ns.moveHistory[-1]
+                labels = last.comboLabels or []
                 bonus = sum(3 if l in ("BRIDGE","CUT") else
                             2 if l in ("CAPTURE","CROSS WORD") else 1
-                            for l in (last.comboLabels or []))
+                            for l in labels)
+                # Rubberband: when Normal bot is already ahead, stop piling on
+                # captures/bridges. It should still play, but not crush beginners.
+                if lead >= 8:
+                    bonus -= (last.captureCount or 0) * 8
+                    bonus -= 7 if "BRIDGE" in labels else 0
+                    bonus -= 4 if "DOUBLE CAPTURE" in labels else 0
+                    bonus -= max(0, (last.territoryGained or 0) - 2) * 2
+                    # prefer readable small words over spectacular swings
+                    return word_score(m["word"]) - bonus
                 return base + bonus
             except Exception:
                 return word_score(m["word"])
+        if lead >= 8:
+            # Choose a non-crushing move from the lower-middle band, not the maximum.
+            scored = sorted([(quick_score(m), m) for m in moves], key=lambda x: x[0])
+            return scored[min(len(scored)-1, max(0, len(scored)//3))][1]
         return max(moves, key=quick_score)
 
     # Strong bot: score all candidates, pick best
