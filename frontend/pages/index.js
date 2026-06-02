@@ -90,7 +90,6 @@ function compactMoveTitle(m) {
 
 
 const LS_DAILY  = "wt_daily_";
-const LS_PREM   = "wt_premium";  // ③⑤ premium flag
 const LS_STREAK = "wt_streak";
 const LS_INTRO  = "wt_intro_seen";
 const LS_TUTOR  = "wt_tutorial_done";
@@ -98,7 +97,6 @@ const LS_ASYNC  = "wt_async_session";
 
 const loadResult  = ds => { try { return JSON.parse(localStorage.getItem(LS_DAILY + ds) || "null"); } catch { return null; } };
 const saveResult  = (ds, r) => { try { localStorage.setItem(LS_DAILY + ds, JSON.stringify(r)); } catch {} };
-const isPremium   = () => { try { return localStorage.getItem(LS_PREM) === "true"; } catch { return false; } };
 
 // ── Rank system ─────────────────────────────────────────────────────────────
 function getRank(capturePct) {
@@ -298,92 +296,6 @@ function LeaderboardModal({ onClose, dailyInfo, myRank }) {
   );
 }
 
-// ── PremiumModal ⑤ ─ Waitlist-first (demand validation before payment impl) ──
-const LS_WAITLIST = "wt_waitlist";
-function PremiumModal({ onClose }) {
-  const [email, setEmail] = useState("");
-  const [joined, setJoined] = useState(() => {
-    try { return !!localStorage.getItem(LS_WAITLIST); } catch { return false; }
-  });
-  const [err, setErr] = useState("");
-
-  function handleJoin() {
-    const trimmed = email.trim();
-    if (!trimmed || !trimmed.includes("@")) { setErr("Please enter a valid email."); return; }
-    try { localStorage.setItem(LS_WAITLIST, trimmed); } catch {}
-    // POST to backend — fire-and-forget (localStorage is source of truth for UX)
-    joinWaitlist(trimmed).catch(() => {});
-    setJoined(true);
-  }
-
-  return (
-    <div className="modal-bg" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
-        <div className="prem-header">
-          <span className="prem-crown">♟</span>
-          <h2>Word Territory Premium</h2>
-          <p className="muted">Support the game · Unlock everything</p>
-        </div>
-        <div className="prem-compare">
-          <div className="prem-col">
-            <div className="prem-tier free">Free</div>
-            <ul>
-              <li>✓ Daily Challenge (1/day)</li>
-              <li>✓ Normal Bot unlimited</li>
-              <li>✓ Daily Leaderboard</li>
-              <li>✓ Territory Preview</li>
-              <li className="locked-feat">✗ Strong Bot unlimited</li>
-              <li className="locked-feat">✗ Daily Streak stats</li>
-              <li className="locked-feat">✗ Puzzle Mode (coming)</li>
-              <li className="locked-feat">✗ Board themes</li>
-              <li className="locked-feat">✗ Replay mode (coming)</li>
-            </ul>
-          </div>
-          <div className="prem-col prem-highlight">
-            <div className="prem-tier premium">Premium</div>
-            <ul>
-              <li>✓ Daily Challenge (1/day)</li>
-              <li>✓ Normal Bot unlimited</li>
-              <li>✓ Daily Leaderboard</li>
-              <li>✓ Territory Preview</li>
-              <li>✓ <strong>Strong Bot unlimited</strong></li>
-              <li>✓ <strong>Daily Streak + stats</strong></li>
-              <li>✓ <strong>Puzzle Mode</strong></li>
-              <li>✓ <strong>Board themes</strong></li>
-              <li>✓ <strong>Replay mode</strong></li>
-            </ul>
-            <div className="prem-price">$3.99 <span>/month</span></div>
-            <div className="prem-price-annual">or $29.99/year (save 37%)</div>
-
-            {/* ⑤ Waitlist — collect demand before building payment */}
-            {!joined ? (
-              <div className="waitlist-box">
-                <div className="waitlist-label">🚧 Payment coming soon</div>
-                <div className="waitlist-sub">Join the waitlist to be notified first:</div>
-                <div className="waitlist-row">
-                  <input
-                    className="waitlist-input" type="email" placeholder="your@email.com"
-                    value={email} onChange={e => { setEmail(e.target.value); setErr(""); }}
-                    onKeyDown={e => e.key === "Enter" && handleJoin()}
-                  />
-                  <button className="btn-prem-cta" onClick={handleJoin}>Join</button>
-                </div>
-                {err && <div className="waitlist-err">{err}</div>}
-              </div>
-            ) : (
-              <div className="waitlist-ok">
-                ✅ You&apos;re on the list! We&apos;ll email you when Premium launches.
-              </div>
-            )}
-          </div>
-        </div>
-        <p className="prem-note">No ads, ever. No pay-to-win, ever.<br/>Premium is cosmetic + convenience only.</p>
-        <div className="modal-btns"><button onClick={onClose}>Close</button></div>
-      </div>
-    </div>
-  );
-}
-
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function Home() {
   const [gameId, setGameId]     = useState("");
@@ -403,7 +315,6 @@ export default function Home() {
   const [showRules,   setRules]   = useState(false);
   const [showHistory, setHistory] = useState(true);
   const [showSuggest, setSuggest] = useState(true);
-  const [showPremium, setPremium] = useState(false);
   const [showLB,      setShowLB]  = useState(false);  // ④
 
   // Combo banner persistence
@@ -428,51 +339,97 @@ export default function Home() {
   const comboTimer = useRef(null);
   const soundTurnRef = useRef(null);
   const captureSoundRef = useRef(null);
+  const bridgeSoundRef = useRef(null);
+  const lockSoundRef = useRef(null);
+  const battleSoundRef = useRef(null);
   const audioCtxRef = useRef(null);
   const [animGen,  setAnimGen]    = useState(0);
 
-  function playSfx(type = "click") {
+  function playSfx(type = "click", delayMs = 0) {
     if (!soundOn || typeof window === "undefined") return;
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return;
-      const ctx = audioCtxRef.current || new Ctx();
-      audioCtxRef.current = ctx;
-      if (ctx.state === "suspended") ctx.resume().catch(()=>{});
-      const now = ctx.currentTime;
-      const gain = ctx.createGain();
-      gain.connect(ctx.destination);
+    const run = () => {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        const ctx = audioCtxRef.current || new Ctx();
+        audioCtxRef.current = ctx;
+        if (ctx.state === "suspended") ctx.resume().catch(()=>{});
+        const now = ctx.currentTime;
 
-      const osc = ctx.createOscillator();
-      const osc2 = type === "synergy" ? ctx.createOscillator() : null;
-      osc.type = type === "capture" ? "square" : type === "synergy" ? "sine" : "triangle";
+        const master = ctx.createGain();
+        master.gain.setValueAtTime(0.0001, now);
+        master.connect(ctx.destination);
 
-      if (type === "capture") {
-        osc.frequency.setValueAtTime(180, now);
-        osc.frequency.exponentialRampToValueAtTime(95, now + 0.16);
-        gain.gain.setValueAtTime(0.0001, now);
-        gain.gain.exponentialRampToValueAtTime(0.06, now + 0.015);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
-        osc.connect(gain); osc.start(now); osc.stop(now + 0.26);
-      } else if (type === "synergy") {
-        osc.frequency.setValueAtTime(660, now);
-        osc.frequency.exponentialRampToValueAtTime(990, now + 0.12);
-        osc2.type = "triangle";
-        osc2.frequency.setValueAtTime(990, now);
-        osc2.frequency.exponentialRampToValueAtTime(1320, now + 0.12);
-        gain.gain.setValueAtTime(0.0001, now);
-        gain.gain.exponentialRampToValueAtTime(0.045, now + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26);
-        osc.connect(gain); osc2.connect(gain); osc.start(now); osc2.start(now); osc.stop(now + 0.28); osc2.stop(now + 0.28);
-      } else {
-        osc.frequency.setValueAtTime(420, now);
-        osc.frequency.exponentialRampToValueAtTime(520, now + 0.045);
-        gain.gain.setValueAtTime(0.0001, now);
-        gain.gain.exponentialRampToValueAtTime(0.035, now + 0.008);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
-        osc.connect(gain); osc.start(now); osc.stop(now + 0.10);
-      }
-    } catch {}
+        const env = (peak = 0.04, attack = 0.01, release = 0.18) => {
+          master.gain.cancelScheduledValues(now);
+          master.gain.setValueAtTime(0.0001, now);
+          master.gain.exponentialRampToValueAtTime(peak, now + attack);
+          master.gain.exponentialRampToValueAtTime(0.0001, now + release);
+        };
+
+        const tone = (freq, start = 0, dur = 0.16, wave = "sine", endFreq = null, gainNode = master) => {
+          const o = ctx.createOscillator();
+          o.type = wave;
+          o.frequency.setValueAtTime(freq, now + start);
+          if (endFreq) o.frequency.exponentialRampToValueAtTime(endFreq, now + start + dur);
+          o.connect(gainNode);
+          o.start(now + start);
+          o.stop(now + start + dur + 0.02);
+          return o;
+        };
+
+        if (type === "click") {
+          env(0.028, 0.006, 0.08);
+          tone(520, 0, 0.055, "triangle", 620);
+          return;
+        }
+
+        if (type === "capture") {
+          // Conquest thump: low, descending, tactile.
+          env(0.065, 0.012, 0.28);
+          tone(190, 0, 0.22, "square", 86);
+          tone(95, 0.025, 0.18, "sawtooth", 62);
+          return;
+        }
+
+        if (type === "bridge") {
+          // Bridge: clear upward two-note connection.
+          env(0.045, 0.015, 0.34);
+          tone(392, 0, 0.13, "sine", 494);
+          tone(587, 0.13, 0.16, "sine", 784);
+          return;
+        }
+
+        if (type === "lock") {
+          // Lock: short metallic clamp.
+          env(0.05, 0.004, 0.16);
+          tone(740, 0, 0.045, "square", 640);
+          tone(260, 0.035, 0.09, "triangle", 180);
+          return;
+        }
+
+        if (type === "synergy") {
+          // Synergy: small arpeggio / sparkle.
+          env(0.045, 0.018, 0.42);
+          tone(660, 0, 0.11, "sine", 880);
+          tone(990, 0.08, 0.12, "triangle", 1320);
+          tone(1320, 0.17, 0.14, "sine", 1760);
+          return;
+        }
+
+        if (type === "battle") {
+          // Battle Report: resolving chord.
+          env(0.05, 0.02, 0.58);
+          tone(330, 0, 0.42, "sine");
+          tone(415, 0.03, 0.40, "sine");
+          tone(494, 0.06, 0.38, "sine");
+          tone(660, 0.12, 0.26, "triangle");
+          return;
+        }
+      } catch {}
+    };
+    if (delayMs > 0) window.setTimeout(run, delayMs);
+    else run();
   }
 
   function finishTutorial() {
@@ -1127,19 +1084,37 @@ export default function Home() {
   }, [showTutorial, tutorialStep, placed?.row, placed?.col, path.length, state?.turn]);
 
 
-  // ── small WebAudio cues: capture / synergy ─────────────────────────────
+  // ── WebAudio cues: click / capture / bridge / lock / synergy / battle report ──
   useEffect(() => {
     if (!lastMove) return;
     const key = `${lastMove.turn}-${lastMove.player}-${lastMove.word}`;
+    const labels = (lastMove.comboLabels || []).map(x => String(x));
+
     if ((lastMove.captureCount || 0) > 0 && captureSoundRef.current !== key) {
       captureSoundRef.current = key;
-      playSfx("capture");
+      playSfx("capture", 0);
     }
-    if ((lastMove.comboLabels || []).some(x => String(x).startsWith("SYNERGY:")) && soundTurnRef.current !== key) {
+    if (labels.some(x => x.includes("BRIDGE")) && bridgeSoundRef.current !== key) {
+      bridgeSoundRef.current = key;
+      playSfx("bridge", (lastMove.captureCount || 0) > 0 ? 130 : 0);
+    }
+    if ((lastMove.fortifiedCellsGained || 0) > 0 && lockSoundRef.current !== key) {
+      lockSoundRef.current = key;
+      playSfx("lock", labels.some(x => x.includes("BRIDGE")) ? 250 : 120);
+    }
+    if (labels.some(x => x.startsWith("SYNERGY:")) && soundTurnRef.current !== key) {
       soundTurnRef.current = key;
-      playSfx("synergy");
+      playSfx("synergy", 330);
     }
-  }, [lastMove?.turn, lastMove?.word, lastMove?.captureCount, JSON.stringify(lastMove?.comboLabels || []), soundOn]);
+  }, [lastMove?.turn, lastMove?.word, lastMove?.captureCount, lastMove?.fortifiedCellsGained, JSON.stringify(lastMove?.comboLabels || []), soundOn]);
+
+  useEffect(() => {
+    if (!state?.winner) return;
+    const key = `${gameId}-${state?.winner}-${state?.turn}`;
+    if (battleSoundRef.current === key) return;
+    battleSoundRef.current = key;
+    playSfx("battle", 120);
+  }, [state?.winner, gameId, state?.turn, soundOn]);
 
   if (!state) return (
     <main className="loading">
@@ -1233,7 +1208,6 @@ export default function Home() {
           )}
           <button className="bsm" onClick={()=>setRules(v=>!v)}>{showRules?"✕ Rules":"? Rules"}</button>
           <Link href="/about" className="bsm" style={{textDecoration:"none",color:"#111"}}>About</Link>
-          {!isTutorial && <button className="bsm prem-btn" onClick={()=>setPremium(true)}>✦ Premium</button>}
           {dailyMode
             ?<button className="bprim" onClick={()=>boot(mode)}>← Free Play</button>
             :<button className="bprim" onClick={()=>boot(mode)}>New Game</button>
@@ -1682,7 +1656,6 @@ export default function Home() {
                 <div className="modal-btns">
                   <button className="bprim" onClick={()=>boot(mode)}>New Game</button>
                   {dailyInfo&&!dailyResult&&<button onClick={()=>{setSum(false);bootDaily();}}>Daily Challenge</button>}
-                  <button onClick={()=>setPremium(true)}>✦ Premium</button>
                   <button onClick={()=>setSum(false)}>Close</button>
                 </div>
               </>
