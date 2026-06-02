@@ -789,7 +789,11 @@ export default function Home() {
   };
   const isLegal = (r,c) => state && !state.board[r][c].letter && hasNbr(r,c);
   const isDim = (r,c) => {
-    if (!state || !human()) return true;
+    if (!state) return true;
+    // In Spectator Mode and Battle Report, the board is display-first.
+    // Do not dim it just because the user cannot click.
+    if (spectatorMode || state.winner) return false;
+    if (!human()) return true;
     const cell = state.board[r][c];
     // Already selected cells are not dim but not clickable again
     if (isSel(r,c)) return false;
@@ -1111,7 +1115,7 @@ export default function Home() {
         <div className="bcol">
           {/* board */}
           <div className="bwrap">
-            <div className="board-wrap"><div className={`board ${lastMoveIsSwing ? "board-swing" : ""}`}>
+            <div className="board-wrap"><div className={`board ${spectatorMode ? "board-demo" : ""} ${lastMoveIsSwing ? "board-swing" : ""}`}>
               {state.board.map(row=>row.map(cell=>{
                 const k=asKey(cell.row,cell.col);
                 const vp = Array.isArray(valuePrev)
@@ -1544,7 +1548,10 @@ export default function Home() {
       .dbanner{background:#111;color:#fff;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-weight:700;font-size:13px}
       .bnr{padding:10px 14px;border-radius:10px;margin-bottom:10px;font-size:14px}
       .thinking{background:#eef3ff;color:#1a47a0}
-      .demo-banner{background:linear-gradient(90deg,#111827,#5b21b6);color:#fff}
+      .demo-banner{background:linear-gradient(90deg,#111827,#4c1d95,#7c3aed);color:#fff;border:1px solid rgba(255,255,255,.16);box-shadow:0 4px 18px rgba(76,29,149,.25)}
+      .demo-status{color:#1e3a8a;font-weight:800}
+      .board-demo{background:radial-gradient(circle at 50% 45%,rgba(124,58,237,.08),transparent 60%);padding:8px;border-radius:16px}
+
       .watch-swing{background:linear-gradient(90deg,#581c87,#7c3aed,#9333ea);color:#fff;font-weight:900;text-align:center;box-shadow:0 0 0 2px rgba(167,139,250,.15)}
       .combo{background:#fff9c4;font-weight:800;text-align:center;font-size:16px;border:2px solid #f5d000}
       .err{background:#ffeaea;color:#8b1a1a;display:flex;justify-content:space-between;align-items:center}
@@ -1560,15 +1567,19 @@ export default function Home() {
       .board{display:grid;grid-template-columns:repeat(7,58px);gap:5px;justify-content:center;min-width:max-content}
       .board.board-swing{animation:boardpulse 900ms ease both}
       .cell-slot{position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center}
-      .cell{position:relative;width:44px;height:44px;border:1.5px solid #c8c8c8;border-radius:9px;background:#fafafa;font-size:17px;font-weight:800;cursor:pointer;transition:background .12s}
-      .cell.cr{background:rgba(192,57,43,.15);border-color:rgba(192,57,43,.3)}
-      .cell.cb{background:rgba(34,113,179,.15);border-color:rgba(34,113,179,.3)}
-      .cell.ft{border-width:3px;border-color:#111;box-shadow:inset 0 0 0 2px rgba(17,17,17,.18)}
+      .cell{position:relative;width:44px;height:44px;border:1.5px solid #c8c8c8;border-radius:9px;background:#fafafa;font-size:17px;font-weight:900;cursor:pointer;transition:background .12s, transform .12s, box-shadow .12s;color:#111}
+      .cell.cr{background:rgba(192,57,43,.24);border-color:rgba(192,57,43,.55);color:#7f1d1d}
+      .cell.cb{background:rgba(34,113,179,.24);border-color:rgba(34,113,179,.55);color:#0b4f85}
+      .cell.ft{border-width:3px;border-color:#111;box-shadow:inset 0 0 0 2px rgba(17,17,17,.24),0 1px 6px rgba(17,17,17,.14)}
+      .board-demo .cell{opacity:1!important;filter:none!important}
+      .board-demo .cell.cr{background:rgba(220,38,38,.34);border-color:rgba(220,38,38,.75);box-shadow:0 2px 8px rgba(220,38,38,.12)}
+      .board-demo .cell.cb{background:rgba(37,99,235,.34);border-color:rgba(37,99,235,.75);box-shadow:0 2px 8px rgba(37,99,235,.12)}
+      .board-demo .cell:not(.cr):not(.cb){background:#fff;color:#111;border-color:#d1d5db}
       .cell.sl{outline:3px solid #f0a500;outline-offset:-2px}
       .cell.pl{box-shadow:inset 0 0 0 3px #111}
       .cell.lg{background:#e8fce8;border-color:#5cb85c}
       .cell.lg:hover{background:#d0f7d0}
-      .cell.dm{opacity:.35;cursor:not-allowed}
+      .cell.dm{opacity:.72;cursor:not-allowed}
       .cell[data-chg]{animation:aclaim 500ms ease forwards}
       .cell[data-cap]{animation:acap 900ms ease forwards;animation-delay:var(--cap-delay,0ms);animation-fill-mode:both}
       .cell[data-lk]{animation:alk 850ms ease forwards;animation-delay:var(--lock-delay,0ms);animation-fill-mode:both}
