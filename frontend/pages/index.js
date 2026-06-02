@@ -1222,7 +1222,7 @@ export default function Home() {
           {dailyInfo&&!dailyMode&&(
             <div className="dcard">
               <span className="dnum">Day #{dailyInfo.dayNumber}</span>
-              <span className="dsub">{streak>1?`🔥 ${streak} day streak`:(dailyResult?"Completed ✓":dailyInfo.openingName)}</span>
+              <span className="dsub">{streak>1?`🔥 ${streak} day streak`:(dailyResult?"Completed ✓":(state?.openingName || dailyInfo.openingName))}</span>
               <div className="dcard-btns">
                 <button className="btn-daily" onClick={dailyResult?()=>{setSum(true);setDailyMode(true);}:bootDaily}>
                   {dailyResult?"View":"Play"}
@@ -1291,7 +1291,7 @@ export default function Home() {
       {synergyFlash&&<div className="bnr synergy-flash">{synergyFlash}</div>}
           {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
       {error&&<div className="bnr err">{error}<button className="bx" onClick={()=>setError("")}>✕</button></div>}
-      {lastMove && lastMove.moveType !== "PASS" && (
+      {lastMove && lastMove.moveType !== "PASS" && lastMoveIsSwing && (
         <div className={`what-card ${lastMoveIsSwing ? "what-swing" : ""}`}>
           <div className="what-kicker">What happened?</div>
           <div className="what-title">{compactMoveTitle(lastMove)}</div>
@@ -1382,7 +1382,7 @@ export default function Home() {
           {!state.winner && (
             <div className="lm-panel" style={{display: market.active.length > 0 ? 'block' : 'none'}}>
               <div className="lm-header">
-                <span className="lm-title">🎴 Letter Market {comebackChance && <b className="come-badge">★ Comeback</b>}</span>
+                <span className="lm-title">🎴 Letter Market {comebackChance && <b className="come-badge">★ Comeback tile loaded</b>}</span>
                 <span className="lm-preview">
                   Next: {(market.preview||[]).map((l,i) => <span key={i} className="lm-prev-chip">{l}</span>)}
                 </span>
@@ -1810,7 +1810,7 @@ export default function Home() {
       .sound-toggle{min-width:84px}
 
       .opening-note{font-size:12px;color:#4c1d95;font-weight:800;margin-top:3px}
-      .come-badge{display:inline-block;margin-left:6px;background:#fef3c7;color:#92400e;border:1px solid #f59e0b;border-radius:999px;padding:2px 7px;font-size:10px;vertical-align:middle}
+      .come-badge{display:inline-block;margin-left:6px;background:#fef3c7;color:#92400e;border:1px solid #f59e0b;border-radius:999px;padding:2px 7px;font-size:10px;vertical-align:middle;box-shadow:0 0 0 3px rgba(245,158,11,.12)}
       .comeback-box{border-color:#f59e0b!important;background:linear-gradient(90deg,#fff7ed,#fff)!important}
       .comeback-box .almost-title{color:#b45309;font-weight:900}
       .tutorial-mini{position:fixed;left:50%;top:78px;transform:translateX(-50%);z-index:80;background:#111827;color:#fff;border:1px solid rgba(255,255,255,.18);box-shadow:0 10px 32px rgba(15,23,42,.28);border-radius:999px;padding:8px 12px;display:flex;align-items:center;gap:10px;font-size:13px}
