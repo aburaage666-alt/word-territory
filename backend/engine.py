@@ -363,7 +363,23 @@ def pick_synergy_options() -> list[str]:
 
 
 def _coord_tuple(p):
-    return (getattr(p, 'row', p.get('row')), getattr(p, 'col', p.get('col'))) if not isinstance(p, tuple) else p
+    """Safely normalize Coord / dict / tuple into (row, col).
+
+    Important: do not use getattr(..., p.get(...)) because Python evaluates
+    the default argument before calling getattr. That crashes for Coord objects
+    with: 'Coord' object has no attribute 'get'.
+    """
+    if isinstance(p, tuple):
+        return p
+    if hasattr(p, 'row') and hasattr(p, 'col'):
+        return (p.row, p.col)
+    if isinstance(p, dict):
+        return (p.get('row'), p.get('col'))
+    # Fallback for other mapping-like objects
+    try:
+        return (p['row'], p['col'])
+    except Exception:
+        raise ValueError(f"Invalid coordinate object: {p!r}")
 
 
 def _path_touches_enemy(state: GameState, path, player: str) -> bool:
