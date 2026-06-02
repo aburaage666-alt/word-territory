@@ -1090,10 +1090,19 @@ export default function Home() {
   }, [JSON.stringify(state?.lastFortifiedCells || [])]);
 
   const tutorialPlaceKey = useMemo(() => {
-    if (!showTutorial || tutorialStep !== 1) return "";
-    const firstLegal = legalCells[0];
-    return firstLegal ? asKey(firstLegal[0], firstLegal[1]) : "";
-  }, [showTutorial, tutorialStep, JSON.stringify(legalCells)]);
+    if (!showTutorial || tutorialStep !== 1 || !state?.board) return "";
+    for (let r = 0; r < state.board.length; r++) {
+      for (let c = 0; c < state.board[r].length; c++) {
+        const cell = state.board[r][c];
+        if (cell?.letter) continue;
+        const neighbors = [[r+1,c],[r-1,c],[r,c+1],[r,c-1]];
+        if (neighbors.some(([nr,nc]) => nr>=0 && nr<state.board.length && nc>=0 && nc<state.board[nr].length && state.board[nr][nc]?.letter)) {
+          return asKey(r,c);
+        }
+      }
+    }
+    return "";
+  }, [showTutorial, tutorialStep, state?.turn, state?.boardSize, JSON.stringify(state?.board || [])]);
   const tutorialPathKey = useMemo(() => {
     if (!showTutorial || tutorialStep !== 2 || !placed) return "";
     const last = (path && path.length > 0 ? path[path.length - 1] : placed);
