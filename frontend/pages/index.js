@@ -1050,6 +1050,10 @@ export default function Home() {
   const lockedS   = new Set((state?.lastFortifiedCells  ||[]).map(c=>asKey(c.row,c.col)));
   const lockedOrderMap = new Map((state?.lastFortifiedCells||[]).map((c,i)=>[asKey(c.row,c.col), i]));
   const redT = tScore(state,"RED"), blueT = tScore(state,"BLUE");
+  const comebackChance = state && !state.winner && state.currentPlayer && state.currentPlayer !== state.botPlayer
+    ? (() => { const p=state.currentPlayer; const opp=p==="RED"?"BLUE":"RED";
+               const my=tScore(state,p), op=tScore(state,opp); return op-my>=6; })()
+    : false;
   const pct  = Math.round((redT / Math.max(redT+blueT,1)) * 100);
   const incPlaced = placed && path.some(p=>p.row===placed.row&&p.col===placed.col);
   const ok = preview?.isInDictionary && preview?.includesPlacedCell;
