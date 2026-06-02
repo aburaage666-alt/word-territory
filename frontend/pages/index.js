@@ -390,6 +390,7 @@ export default function Home() {
   // Combo banner persistence
   const [comboBanner, setCombo]   = useState([]);
   const [synergyFlash, setSynergyFlash] = useState("");
+  const [bridgeFlash,  setBridgeFlash]  = useState(false);  // Board flash on BRIDGE
   const [showSynergy, setShowSynergy] = useState(false);
   const [synergyOpts, setSynergyOpts] = useState([]);
   const [synergy,     setSynergy]     = useState("");
@@ -602,6 +603,11 @@ export default function Home() {
       setCombo(c);
       if (comboTimer.current) clearTimeout(comboTimer.current);
       comboTimer.current = setTimeout(() => setCombo([]), 3500);
+      // Bridge flash animation
+      if (c.some(lbl => lbl === "BRIDGE" || lbl === "BRIDGE MASTER")) {
+        setBridgeFlash(true);
+        setTimeout(() => setBridgeFlash(false), 900);
+      }
     }
   }, [state?.turn]);
 
@@ -1115,7 +1121,11 @@ export default function Home() {
         <div className="bcol">
           {/* board */}
           <div className="bwrap">
-            <div className="board-wrap"><div className={`board ${spectatorMode ? "board-demo" : ""} ${lastMoveIsSwing ? "board-swing" : ""}`}>
+            {state.winner && state.winner !== "" && (
+              <div className={`end-flood ${state.winner === "RED" ? "flood-red" : state.winner === "BLUE" ? "flood-blue" : "flood-draw"}`}
+                key={`flood-${state.winner}`}/>
+            )}
+            <div className="board-wrap"><div className={`board ${spectatorMode ? "board-demo" : ""} ${lastMoveIsSwing ? "board-swing" : ""} ${bridgeFlash ? "board-bridge" : ""}`}>
               {state.board.map(row=>row.map(cell=>{
                 const k=asKey(cell.row,cell.col);
                 const vp = Array.isArray(valuePrev)
@@ -1563,7 +1573,7 @@ export default function Home() {
 
       /* board */
       .bwrap{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px;overflow-x:auto}
-      .board-wrap{width:100%;overflow-x:auto;display:flex;justify-content:center;-webkit-overflow-scrolling:touch}
+      .board-wrap{position:relative;width:100%;overflow-x:auto;display:flex;justify-content:center;-webkit-overflow-scrolling:touch}
       .board{display:grid;grid-template-columns:repeat(7,58px);gap:5px;justify-content:center;min-width:max-content}
       .board.board-swing{animation:boardpulse 900ms ease both}
       .cell-slot{position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center}
@@ -1707,6 +1717,15 @@ export default function Home() {
       .pvcap{color:#e65c00;font-weight:800;font-size:13px}
       @keyframes ainpath{0%{box-shadow:inset 0 0 0 3px #e65c00}100%{box-shadow:inset 0 0 0 3px #ff8c00}}
       @keyframes aclaim{0%{transform:scale(1.12)}100%{transform:scale(1)}}
+      /* Bridge flash — board glows teal when BRIDGE fires */
+      @keyframes abridge{0%{box-shadow:inset 0 0 0 0 rgba(29,155,117,0)}40%{box-shadow:inset 0 0 0 6px rgba(29,155,117,.55)}100%{box-shadow:inset 0 0 0 0 rgba(29,155,117,0)}}
+      .board-bridge{animation:abridge 900ms ease forwards}
+      /* End-game flood */
+      @keyframes aflood{0%{opacity:0;transform:scale(.94)}30%{opacity:.18}70%{opacity:.22}100%{opacity:0;transform:scale(1.04)}}
+      .end-flood{position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:20;animation:aflood 2.4s ease forwards}
+      .flood-red{background:#e63946}
+      .flood-blue{background:#1d3557}
+      .flood-draw{background:#555}
       @keyframes boardpulse{0%{transform:scale(1);filter:saturate(1)}35%{transform:scale(1.018);filter:saturate(1.28)}100%{transform:scale(1);filter:saturate(1)}}
       @keyframes acap{0%{transform:scale(.92);filter:saturate(1);box-shadow:0 0 0 0 rgba(250,204,21,0)}35%{transform:scale(1.18);background:#fde68a;filter:saturate(1.9);box-shadow:0 0 0 6px rgba(250,204,21,.28)}70%{transform:scale(.96);box-shadow:0 0 0 2px rgba(250,204,21,.14)}100%{transform:scale(1)}}
       @keyframes alk{0%{box-shadow:0 0 0 8px #111 inset,0 0 0 0 rgba(17,17,17,.7);transform:scale(1.08)}45%{box-shadow:0 0 0 3px #111 inset,0 0 0 8px rgba(17,17,17,.12);transform:scale(.98)}100%{transform:scale(1)}}
