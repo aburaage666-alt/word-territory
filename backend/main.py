@@ -63,6 +63,7 @@ from datetime import datetime, timezone
 from daily import date_to_day_number, date_to_opening_idx, get_today_utc
 from engine import (
     apply_bot_move,
+    apply_demo_bot_move,
     apply_seed_move,
     build_initial_state,
     find_candidate_words,
@@ -190,7 +191,7 @@ def bot_move(game_id: str):
     import concurrent.futures, random
 
     def run_bot():
-        return apply_bot_move(state)
+        return apply_demo_bot_move(state) if demo else apply_bot_move(state)
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
@@ -222,7 +223,7 @@ def bot_move(game_id: str):
 
 
 @app.post("/games/{game_id}/auto-move", response_model=GameState)
-def auto_move(game_id: str):
+def auto_move(game_id: str, demo: bool = False):
     """Spectator / demo mode: let the current player be controlled by bot logic.
 
     Unlike /bot-move, this works for either RED or BLUE. It is designed for
@@ -237,7 +238,7 @@ def auto_move(game_id: str):
     import concurrent.futures, random
 
     def run_bot():
-        return apply_bot_move(state)
+        return apply_demo_bot_move(state) if demo else apply_bot_move(state)
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
