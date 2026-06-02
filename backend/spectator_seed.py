@@ -1,0 +1,4 @@
+# Showcase configuration for Watch Demo / trailer capture.
+SHOWCASE_SEED = 42
+SHOWCASE_OPENING_IDX = 2  # BRIDGE OPENING
+SHOWCASE_SYNERGY = "BRIDGE_MASTER"
