@@ -234,6 +234,8 @@ _SUGGESTED_EXCLUDE = frozenset({
     # obscure / proper-looking / weak demo words observed in tests
     'HES','MAS','EST','SIM','IDES','ODES','JUT','ZIT','GOB','DOIT','NARC','OTIC','ALEC',
     'VAR','FARO','TARO','GEN','TOSH','LENO','BIFF','GLIB',
+    # from words_ui filter pass
+    'POPES','BIFFS','CYST','PHYS','ACETYL','ABHOR','SPIV','SPRY',
     # very technical / weak bot choices
     'ION','IONA','ERG','OHM','EMU','OVA','AXE',
     # UI/preview/bot filter: abbreviations, dictionary noise, obscure variants
@@ -275,11 +277,18 @@ def _is_ui_word(word: str) -> bool:
 
 
 # Demo Dictionary: stricter than UI hints.
-# Watch Demo / Trailer / Spectator showcase uses this list so the demo never
-# feels like a dictionary exploit. The full Valid Dictionary remains available
-# for manual play, and UI Dictionary remains broader for Suggested / Almost.
-_DEMO_WORDS = frozenset(('STONE', 'WATER', 'PLANT', 'BRIDGE', 'TRAIN', 'LIGHT', 'RIVER', 'GARDEN', 'HOPE', 'FIRE', 'LINE', 'FIELD', 'ROAD', 'GATE', 'STAR', 'ROPE', 'BONE', 'TONE', 'ROSE', 'CONE', 'TREE', 'ROOT', 'LEAF', 'HOUSE', 'HOME', 'WALL', 'PATH', 'TRAIL', 'LAND', 'LAKE', 'RAIN', 'CLOUD', 'SUN', 'MOON', 'NIGHT', 'DAY', 'WIND', 'HILL', 'VALLEY', 'FOREST', 'MARKET', 'CIRCLE', 'CART', 'CARE', 'RATE', 'TEAR', 'NEAR', 'EARN', 'EAST', 'WEST', 'NORTH', 'SOUTH', 'HAND', 'HARD', 'RING', 'WING', 'KING', 'SING', 'FIND', 'FINE', 'MIND', 'MINE', 'KIND', 'LINK', 'SAND', 'BIRD', 'FISH', 'BOAT', 'PORT', 'SHIP', 'ROCK', 'IRON', 'WOOD', 'GOLD', 'SILVER', 'GREEN', 'BLUE', 'RED', 'BLACK', 'WHITE', 'CLEAR', 'BRIGHT', 'SMART', 'QUICK', 'SLOW', 'FAST', 'OPEN', 'CLOSE', 'COVER', 'BUILD', 'BREAK', 'CLAIM', 'CROSS', 'BLOCK', 'LOCK', 'SAFE', 'GUARD', 'POWER', 'SHARE', 'PLACE', 'SPACE', 'MAP', 'WORD', 'GAME', 'MOVE', 'TURN', 'SCORE', 'ROUND', 'BATTLE', 'BRICK', 'TRACK', 'TRUCK', 'PLANE', 'GRASS', 'SEED', 'BLOOM', 'FRUIT', 'WHEAT'))
+# These words are preferred/allowed for Watch Demo and trailer-style bot play.
+# The goal is not to make the strongest dictionary player; it is to make the
+# map-changing moment readable to a first-time viewer.
+_DEMO_WORD_PROMOTE = frozenset({
+    'STONE','WATER','BRIDGE','GARDEN','PLANT','MARKET','CIRCLE','LIGHT','RIVER',
+    'TRAIN','TRAIL','ROPE','HOPE','FIND','FINE','LINE','LINK','LAND','ROAD','PATH',
+    'STAR','ROSE','TREE','ROOT','LEAF','FIELD','HOUSE','HOME','WALL','GATE',
+    'CART','CARE','RATE','TEAR','NEAR','EARN','EAST','WEST','NORTH','SOUTH',
+    'CONE','NOTE','TONE','BONE','RING','WING','KING','SING','HAND','HARD',
+})
 _DEMO_WORD_EXCLUDE = frozenset({
+    # keep demo/trailer away from dictionary trivia and abbreviations
     'IRE','DISC','WREN','WRET','THUS','CHUB','HULK','HULL','GLIB','BIFF',
     'MPH','ETC','LIB','TBSP','TSP','VAR','FARO','TARO','GEN','TOSH','LENO',
 })
@@ -288,7 +297,18 @@ def _is_demo_word(word: str) -> bool:
     w = word.upper().strip()
     if w in _DEMO_WORD_EXCLUDE:
         return False
-    return w in _DEMO_WORDS and _is_ui_word(w)
+    if not _is_ui_word(w):
+        return False
+    # Demo should mostly show obvious, readable words.
+    # Allow a promoted set and ordinary-looking 4–6 letter words with enough vowels.
+    if w in _DEMO_WORD_PROMOTE:
+        return True
+    vowels = sum(1 for ch in w if ch in 'AEIOU')
+    if len(w) == 3:
+        return False
+    if len(w) >= 4 and vowels >= 2:
+        return True
+    return False
 
 
 # ── Letter Market ─────────────────────────────────────────────────────────────
@@ -1850,11 +1870,9 @@ def choose_demo_bot_move(state: GameState):
     This deliberately favors readable, map-changing turns over raw win rate.
     It makes Spectator Mode useful as a 30-second explanation tool.
     """
-    legal_moves = _fast_bot_moves(state, max_len=5, max_results=80, excluded=set(state.usedWords))
-    # Strict Demo Dictionary: Watch Demo should show common, readable words only.
-    legal_moves = [m for m in legal_moves if _is_demo_word(m.get("word", ""))]
+    legal_moves = _fast_bot_moves(state, max_len=5, max_results=28, excluded=set(state.usedWords))
     if not legal_moves:
-        return None
+        return choose_bot_move(state)
 
     player = state.currentPlayer
     best_move = None
@@ -1905,7 +1923,7 @@ def choose_demo_bot_move(state: GameState):
             best_value = value
             best_move = move
 
-    return best_move
+    return best_move or choose_bot_move(state)
 
 
 def apply_demo_bot_move(state: GameState):
