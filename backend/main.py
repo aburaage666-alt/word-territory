@@ -7,6 +7,10 @@ from spectator_seed import SHOWCASE_SEED, SHOWCASE_OPENING_IDX, SHOWCASE_SYNERGY
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+import traceback
 
 # ── SQLite persistence ────────────────────────────────────────────────────────
 DB_PATH = Path(__file__).parent / "data.db"
@@ -112,6 +116,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── CORS-safe exception handler ─────────────────────────────────────────────
+# FastAPI's CORSMiddleware does NOT add headers to unhandled 500 errors.
+# This handler ensures CORS headers are present even when the server crashes.
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "https://word-territory1.onrender.com",
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Allow-Methods": "*",
+    "Access-Control-Allow-Headers": "*",
+}
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    tb = traceback.format_exc()
+    print(f"[ERROR] {request.method} {request.url}\n{tb}", flush=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "path": str(request.url)},
+        headers=CORS_HEADERS,
+    )
+
 GAMES: dict[str, GameState] = {}
 
 # In-memory daily leaderboard. Resets on server restart.
@@ -206,38 +230,27 @@ def bot_move(game_id: str):
     if state.currentPlayer != state.botPlayer:
         raise HTTPException(status_code=400, detail="It is not the bot's turn")
 
-    # Run bot move in a thread with a hard 4-second timeout.
-    # If the bot cannot decide in time, apply_seed_move is used as fallback
-    # so the game never hangs on "Bot is thinking..."
-    import concurrent.futures, random
+    import concurrent.futures, random, traceback as _tb
+
+    # `demo` is False for regular games (True only in spectator/auto-move)
+    demo = False
 
     def run_bot():
-        return apply_demo_bot_move(state) if demo else apply_bot_move(state)
+        return apply_bot_move(state)
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             future = ex.submit(run_bot)
             next_state = future.result(timeout=4)
-    except concurrent.futures.TimeoutError:
-        # Fallback: place a random letter on a legal cell (instant)
-        board = state.board
-        legal = [
-            (r, c)
-            for r in range(len(board))
-            for c in range(len(board[r]))
-            if not board[r][c].letter and any(
-                board[r2][c2].letter
-                for r2, c2 in [(r-1,c),(r+1,c),(r,c-1),(r,c+1)]
-                if 0 <= r2 < len(board) and 0 <= c2 < len(board[r2])
-            )
-        ]
-        if legal:
-            row, col = random.choice(legal)
-            import string
-            letter = random.choice(string.ascii_uppercase)
-            next_state = apply_seed_move(state, row, col, letter)
-        else:
+    except Exception as _e:
+        # Catches both TimeoutError and any engine crash
+        print(f"[bot-move] fallback: {type(_e).__name__}: {_e}", flush=True)
+        print(_tb.format_exc(), flush=True)
+        # Safe fallback: pass the turn so the game never hangs
+        try:
             next_state = pass_turn(state)
+        except Exception:
+            raise HTTPException(status_code=500, detail="Bot move failed")
 
     GAMES[game_id] = next_state
     return next_state
