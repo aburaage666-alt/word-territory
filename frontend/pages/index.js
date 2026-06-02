@@ -77,6 +77,8 @@ const LS_DAILY  = "wt_daily_";
 const LS_PREM   = "wt_premium";  // ③⑤ premium flag
 const LS_STREAK = "wt_streak";
 const LS_INTRO  = "wt_intro_seen";
+const LS_TUTOR  = "wt_tutorial_done";
+const LS_ASYNC  = "wt_async_session";
 
 const loadResult  = ds => { try { return JSON.parse(localStorage.getItem(LS_DAILY + ds) || "null"); } catch { return null; } };
 const saveResult  = (ds, r) => { try { localStorage.setItem(LS_DAILY + ds, JSON.stringify(r)); } catch {} };
@@ -115,23 +117,19 @@ function buildEmojiBoard(board) {
 }
 
 function buildShare(num, ds, r) {
-  const totalCells = 49; // 7x7
-  const capturePct = Math.round((r.redScore / totalCells) * 100);
-  const rank = getRank(capturePct);
-  const rankEmoji = getRankEmoji(capturePct);
-  const result = r.winner === "RED" ? "WIN 🎉" : r.winner === null ? "DRAW 🤝" : "LOSS 😤";
-  const emojiBoard = r.emojiBoard || "";
-
+  const winner = r.winner || "DRAW";
+  const score = `🔴 ${r.redScore} – ${r.blueScore} 🔵`;
+  const best = r.bestMove ? `Best Swing: ${r.bestMove}` : null;
+  const opening = r.openingName ? `Opening: ${r.openingName.replace(" OPENING","")}` : null;
+  const board = r.emojiBoard || "";
   return [
-    `Word Territory Daily #${num}`,
-    `${rankEmoji} ${rank} — ${capturePct}% captured`,
-    ``,
-    result + `  ·  ${r.turns} turns`,
-    r.bestMove ? `Best Territorial Swing: ${r.bestMove}` : null,
-    ``,
-    emojiBoard,
+    `Word Territory #${num}`,
+    `${winner} · ${score}`,
+    opening,
+    best,
+    board,
     `word-territory1.onrender.com`,
-  ].filter(l => l !== null).join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 // ── Hand generator ───────────────────────────────────────────────────────────
@@ -190,16 +188,18 @@ function updateStreak(dateStr) {
 }
 
 // ── Cell ──────────────────────────────────────────────────────────────────────
-function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, disabled, gen, attack, inPath, threat, threatMove, captureOrder, lockOrder, onClick }) {
+function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, bridgePath, lockNeighbor, disabled, gen, attack, inPath, threat, threatMove, captureOrder, lockOrder, onClick }) {
   const cls = ["cell",
     cell.owner === "RED" ? "cr" : cell.owner === "BLUE" ? "cb" : "",
     cell.fortified ? "ft" : "", sel ? "sl" : "", placed ? "pl" : "",
     legal ? "lg" : "", disabled && !sel ? "dm" : "",
     attack ? "atk" : "",   // opponent cell that can be attacked
     threat ? "threat" : "", threatMove ? "threatMove" : "",
+    bridgePath ? "bridge-path" : "", lockNeighbor ? "lock-neighbor" : "",
     inPath ? "inpath" : "", // opponent cell currently in selected path (will be captured)
   ].filter(Boolean).join(" ");
   const animStyle = {
+    "--cap-order": captureOrder != null ? captureOrder : 0,
     "--cap-delay": captureOrder != null ? `${captureOrder * 80}ms` : "0ms",
     "--lock-delay": lockOrder != null ? `${lockOrder * 70}ms` : "0ms",
   };
@@ -390,7 +390,6 @@ export default function Home() {
   // Combo banner persistence
   const [comboBanner, setCombo]   = useState([]);
   const [synergyFlash, setSynergyFlash] = useState("");
-  const [bridgeFlash,  setBridgeFlash]  = useState(false);  // Board flash on BRIDGE
   const [showSynergy, setShowSynergy] = useState(false);
   const [synergyOpts, setSynergyOpts] = useState([]);
   const [synergy,     setSynergy]     = useState("");
@@ -404,8 +403,64 @@ export default function Home() {
   const [spectatorSteps, setSpectatorSteps] = useState(0);
   const [spectatorNote, setSpectatorNote] = useState("");
   const [showIntro, setShowIntro] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [soundOn, setSoundOn] = useState(true);
   const comboTimer = useRef(null);
+  const soundTurnRef = useRef(null);
+  const captureSoundRef = useRef(null);
+  const audioCtxRef = useRef(null);
   const [animGen,  setAnimGen]    = useState(0);
+
+  function playSfx(type = "click") {
+    if (!soundOn || typeof window === "undefined") return;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = audioCtxRef.current || new Ctx();
+      audioCtxRef.current = ctx;
+      if (ctx.state === "suspended") ctx.resume().catch(()=>{});
+      const now = ctx.currentTime;
+      const gain = ctx.createGain();
+      gain.connect(ctx.destination);
+
+      const osc = ctx.createOscillator();
+      const osc2 = type === "synergy" ? ctx.createOscillator() : null;
+      osc.type = type === "capture" ? "square" : type === "synergy" ? "sine" : "triangle";
+
+      if (type === "capture") {
+        osc.frequency.setValueAtTime(180, now);
+        osc.frequency.exponentialRampToValueAtTime(95, now + 0.16);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.06, now + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+        osc.connect(gain); osc.start(now); osc.stop(now + 0.26);
+      } else if (type === "synergy") {
+        osc.frequency.setValueAtTime(660, now);
+        osc.frequency.exponentialRampToValueAtTime(990, now + 0.12);
+        osc2.type = "triangle";
+        osc2.frequency.setValueAtTime(990, now);
+        osc2.frequency.exponentialRampToValueAtTime(1320, now + 0.12);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.045, now + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26);
+        osc.connect(gain); osc2.connect(gain); osc.start(now); osc2.start(now); osc.stop(now + 0.28); osc2.stop(now + 0.28);
+      } else {
+        osc.frequency.setValueAtTime(420, now);
+        osc.frequency.exponentialRampToValueAtTime(520, now + 0.045);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.035, now + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+        osc.connect(gain); osc.start(now); osc.stop(now + 0.10);
+      }
+    } catch {}
+  }
+
+  function finishTutorial() {
+    try { localStorage.setItem(LS_TUTOR, "1"); } catch {}
+    setShowTutorial(false);
+    setTutorialStep(0);
+  }
 
   // Daily ③④
   const [dailyMode,   setDailyMode]   = useState(false);
@@ -446,6 +501,7 @@ export default function Home() {
         setBootMsg("Loading async match…");
         getAsyncMatch(mid, tok).then(d => {
           setAsyncMode(true); setAsyncToken(tok); setAsyncRole(d.role || "");
+          try { localStorage.setItem(LS_ASYNC, JSON.stringify({ match: mid, token: tok })); } catch {}
           setGameId(mid); setState(d.state); setDailyMode(false); setBootMsg("");
           if (d.state?.marketLetters?.length > 0) setMarket({ active:d.state.marketLetters, preview:d.state.previewLetters||[], stats:[], freeLetterUsed:!!d.state.freeLetterUsed });
           getSuggestions(mid).then(setSugg).catch(()=>setSugg([]));
@@ -453,6 +509,20 @@ export default function Home() {
         }).catch(e => setError(e.message || "Could not load async match"));
       } else if (typeof window !== "undefined" && localStorage.getItem(LS_INTRO) !== "1") {
         setShowIntro(true);
+      }
+      // Restore the last async match after reload if no explicit match URL was provided.
+      if (!window.location.search.includes("match=")) {
+        const saved = JSON.parse(localStorage.getItem(LS_ASYNC) || "null");
+        if (saved?.match && saved?.token) {
+          setBootMsg("Restoring async match…");
+          getAsyncMatch(saved.match, saved.token).then(d => {
+            setAsyncMode(true); setAsyncToken(saved.token); setAsyncRole(d.role || "");
+            setGameId(saved.match); setState(d.state); setDailyMode(false); setBootMsg("");
+            if (d.state?.marketLetters?.length > 0) setMarket({ active:d.state.marketLetters, preview:d.state.previewLetters||[], stats:[], freeLetterUsed:!!d.state.freeLetterUsed });
+            getSuggestions(saved.match).then(setSugg).catch(()=>setSugg([]));
+            getThreat(saved.match).then(setThreats).catch(()=>setThreats([]));
+          }).catch(()=>{ try { localStorage.removeItem(LS_ASYNC); } catch {} });
+        }
       }
     } catch {}
   }, []);
@@ -587,9 +657,29 @@ export default function Home() {
     try {
       const qs = new URLSearchParams(window.location.search);
       if (qs.get("match") && qs.get("token")) return;
+      const saved = JSON.parse(localStorage.getItem(LS_ASYNC) || "null");
+      if (saved?.match && saved?.token) return;
     } catch {}
     boot().catch(e => setError(String(e)));
   }, []);
+
+  // ── first-turn tutorial ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!state || showIntro || spectatorMode || asyncMode || state.winner) return;
+    try {
+      if (localStorage.getItem(LS_TUTOR) === "1") return;
+    } catch {}
+    setShowTutorial(true);
+  }, [!!state, showIntro, spectatorMode, asyncMode, state?.winner]);
+
+  useEffect(() => {
+    if (!showTutorial) return;
+    if (tutorialStep === 0 && letter) setTutorialStep(1);
+    else if (tutorialStep === 1 && placed) setTutorialStep(2);
+    else if (tutorialStep === 2 && path.length >= 3) setTutorialStep(3);
+    else if (tutorialStep === 3 && (state?.moveHistory?.length || 0) > 0) finishTutorial();
+  }, [showTutorial, tutorialStep, letter, placed?.row, placed?.col, path.length, state?.moveHistory?.length]);
+
 
   // ── state tick ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -603,11 +693,6 @@ export default function Home() {
       setCombo(c);
       if (comboTimer.current) clearTimeout(comboTimer.current);
       comboTimer.current = setTimeout(() => setCombo([]), 3500);
-      // Bridge flash animation
-      if (c.some(lbl => lbl === "BRIDGE" || lbl === "BRIDGE MASTER")) {
-        setBridgeFlash(true);
-        setTimeout(() => setBridgeFlash(false), 900);
-      }
     }
   }, [state?.turn]);
 
@@ -654,7 +739,7 @@ export default function Home() {
       try {
         await new Promise(r => setTimeout(r, delay));
         if (cancelled) return;
-        const next = await autoMove(gameId);
+        const next = await autoMove(gameId, true);
         if (cancelled) return;
         setState(next);
         setSpectatorSteps(n => n + 1);
@@ -820,6 +905,7 @@ export default function Home() {
 
   function clickCell(r,c) {
     if (!state || !human()) return;
+    playSfx("click");
     const cell = state.board[r][c];
 
     // Deselect last cell if tapping it again (undo last step)
@@ -966,6 +1052,42 @@ export default function Home() {
     (lastMove.comboLabels || []).some(x => String(x).includes("BRIDGE") || String(x).includes("SYNERGY") || String(x).includes("CAPTURE"))
   );
 
+  const lastMoveHasBridge = !!lastMove && (lastMove.comboLabels || []).some(x => String(x).includes("BRIDGE"));
+  const bridgePathSet = useMemo(() => {
+    const s = new Set();
+    if (lastMoveHasBridge) (lastMove.path || []).forEach(p => s.add(asKey(p.row, p.col)));
+    return s;
+  }, [lastMove?.turn, lastMove?.word, lastMoveHasBridge]);
+  const bridgeSvgPoints = useMemo(() => {
+    if (!lastMoveHasBridge || !(lastMove?.path || []).length) return "";
+    return (lastMove.path || []).map(p => `${(p.col || 0) + 0.5},${(p.row || 0) + 0.5}`).join(" ");
+  }, [lastMove?.turn, lastMove?.word, lastMoveHasBridge]);
+  const lockNeighborSet = useMemo(() => {
+    const s = new Set();
+    (state?.lastFortifiedCells || []).forEach(c => {
+      [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr,dc]) => {
+        const r = c.row + dr, col = c.col + dc;
+        if (r >= 0 && r < 7 && col >= 0 && col < 7) s.add(asKey(r,col));
+      });
+    });
+    return s;
+  }, [JSON.stringify(state?.lastFortifiedCells || [])]);
+
+
+  // ── small WebAudio cues: capture / synergy ─────────────────────────────
+  useEffect(() => {
+    if (!lastMove) return;
+    const key = `${lastMove.turn}-${lastMove.player}-${lastMove.word}`;
+    if ((lastMove.captureCount || 0) > 0 && captureSoundRef.current !== key) {
+      captureSoundRef.current = key;
+      playSfx("capture");
+    }
+    if ((lastMove.comboLabels || []).some(x => String(x).startsWith("SYNERGY:")) && soundTurnRef.current !== key) {
+      soundTurnRef.current = key;
+      playSfx("synergy");
+    }
+  }, [lastMove?.turn, lastMove?.word, lastMove?.captureCount, JSON.stringify(lastMove?.comboLabels || []), soundOn]);
+
   if (!state) return (
     <main className="loading">
       <div style={{background:"#fff",border:"1px solid #e0e0e0",borderRadius:18,padding:"40px 48px",textAlign:"center",maxWidth:380,width:"90%",boxShadow:"0 4px 24px rgba(0,0,0,.08)"}}>
@@ -1006,14 +1128,32 @@ export default function Home() {
             <h2>Words become territory.</h2>
             <p>Watch letters claim ground, trigger captures, lock cells, and reshape the map.</p>
             <div className="intro-steps">
-              <span>1. Pick a letter</span>
-              <span>2. Preview territory</span>
-              <span>3. Capture the map</span>
+              <span>1. Choose a letter</span>
+              <span>2. Tap a glowing cell</span>
+              <span>3. Connect a word</span>
+              <span>4. Watch territory change</span>
             </div>
             <div className="intro-btns">
               <button className="bprim" onClick={()=>dismissIntro(true)}>▶ Watch Demo</button>
               <button className="bsm" onClick={()=>dismissIntro(false)}>Start Playing</button>
             </div>
+          </div>
+        </div>
+      )}
+      {showTutorial && !showIntro && !spectatorMode && !state?.winner && (
+        <div className="tutorial-card">
+          <div className="tutorial-head">
+            <span>First move tutorial</span>
+            <button onClick={finishTutorial}>Skip</button>
+          </div>
+          <div className="tutorial-copy">
+            {tutorialStep===0 && <>1/4 · Choose one tile from <strong>Letter Market</strong>.</>}
+            {tutorialStep===1 && <>2/4 · Tap a <strong>glowing green cell</strong> to place it.</>}
+            {tutorialStep===2 && <>3/4 · Connect adjacent letters to make a <strong>3–6 letter word</strong>.</>}
+            {tutorialStep===3 && <>4/4 · Press <strong>Submit</strong> and watch territory change.</>}
+          </div>
+          <div className="tutorial-dots">
+            {[0,1,2,3].map(i => <span key={i} className={i===tutorialStep ? "on" : ""}/>) }
           </div>
         </div>
       )}
@@ -1025,6 +1165,7 @@ export default function Home() {
           <p className="tagline">Words become territory. Each move reshapes the map.</p>
         </div>
         <div className="hdr-r">
+          <button className="bsm sound-toggle" onClick={()=>setSoundOn(v=>!v)} title="Toggle sound">{soundOn ? "🔊 Sound" : "🔇 Muted"}</button>
           {!dailyMode&&(
             <div className="mode-box">
               <label>Bot</label>
@@ -1109,7 +1250,12 @@ export default function Home() {
       {lastMove && lastMove.moveType !== "PASS" && (
         <div className={`what-card ${lastMoveIsSwing ? "what-swing" : ""}`}>
           <div className="what-kicker">What happened?</div>
-          <strong>{compactMoveTitle(lastMove)}</strong>
+          <div className="what-title">{compactMoveTitle(lastMove)}</div>
+          <div className="what-summary">
+            {(lastMove.territoryGained||0)>0 && <span>Territory Swing +{lastMove.territoryGained}</span>}
+            {(lastMove.captureCount||0)>0 && <span>Captured {lastMove.captureCount} cell{lastMove.captureCount===1?"":"s"}</span>}
+            {(lastMove.fortifiedCellsGained||0)>0 && <span>Locked {lastMove.fortifiedCellsGained} cell{lastMove.fortifiedCellsGained===1?"":"s"}</span>}
+          </div>
           <div className="what-lines">
             {lastMoveInsights.slice(1,5).map((line,i)=><span key={i}>{line}</span>)}
           </div>
@@ -1121,11 +1267,7 @@ export default function Home() {
         <div className="bcol">
           {/* board */}
           <div className="bwrap">
-            {state.winner && state.winner !== "" && (
-              <div className={`end-flood ${state.winner === "RED" ? "flood-red" : state.winner === "BLUE" ? "flood-blue" : "flood-draw"}`}
-                key={`flood-${state.winner}`}/>
-            )}
-            <div className="board-wrap"><div className={`board ${spectatorMode ? "board-demo" : ""} ${lastMoveIsSwing ? "board-swing" : ""} ${bridgeFlash ? "board-bridge" : ""}`}>
+            <div className="board-wrap"><div className={`board ${spectatorMode ? "board-demo" : ""} ${lastMoveIsSwing ? "board-swing" : ""}`}>
               {state.board.map(row=>row.map(cell=>{
                 const k=asKey(cell.row,cell.col);
                 const vp = Array.isArray(valuePrev)
@@ -1137,6 +1279,7 @@ export default function Home() {
                     sel={isSel(cell.row,cell.col)} placed={placed?.row===cell.row&&placed?.col===cell.col}
                     legal={!placed&&isLegal(cell.row,cell.col)}
                     changed={changedS.has(k)} captured={capturedS.has(k)} lockedNow={lockedS.has(k)}
+                    bridgePath={bridgePathSet.has(k)} lockNeighbor={lockNeighborSet.has(k)}
                     captureOrder={capturedOrderMap.get(k)} lockOrder={lockedOrderMap.get(k)}
                     disabled={isDim(cell.row,cell.col)} gen={animGen}
                     attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
@@ -1149,6 +1292,11 @@ export default function Home() {
                   </div>}
                 </div>;
               }))}
+              {bridgeSvgPoints && (
+                <svg className="bridge-svg" viewBox="0 0 7 7" preserveAspectRatio="none" aria-hidden="true">
+                  <polyline points={bridgeSvgPoints} />
+                </svg>
+              )}
             </div>
           </div>
 
@@ -1174,6 +1322,12 @@ export default function Home() {
                 <div className="report-stats">
                   <span>Largest capture: {Math.max(0, ...((state.moveHistory||[]).map(m=>m.captureCount||0)))} cells</span>
                   <span>Top swings: {topMoves.length}</span>
+                  <span>Opening: {state.openingName}</span>
+                </div>
+                {state?.board && <pre className="report-emoji">{buildEmojiBoard(state.board)}</pre>}
+                <div className="report-actions">
+                  <button className="bcopy" onClick={async()=>{try{await navigator.clipboard.writeText(buildShare(dailyInfo?.dayNumber || "Free", "", {winner:state.winner, redScore:redT, blueScore:blueT, bestMove:bestMove?moveLabel(bestMove):"", openingName:state.openingName, emojiBoard:buildEmojiBoard(state.board)}));setCopied(true);setTimeout(()=>setCopied(false),2000);}catch{}}}>{copied?"✓ Copied":"Copy result"}</button>
+                  <button className="bcopy" onClick={async()=>{try{await navigator.clipboard.writeText(buildEmojiBoard(state.board));setCopied(true);setTimeout(()=>setCopied(false),2000);}catch{}}}>Copy board</button>
                 </div>
               </div>
             </>
@@ -1195,6 +1349,7 @@ export default function Home() {
                     className={`lm-tile ${letter===ltr ? 'lm-selected' : ''}`}
                     onClick={() => {
                       if (state?.winner) return;
+                      playSfx("click");
                       setLetter(ltr); setPath([]); setPlaced(null); setError(''); setPreview(null);
                       setValuePrev([]);
                       if (gameId && ltr) getLetterPreview(gameId, ltr)
@@ -1434,7 +1589,6 @@ export default function Home() {
                 {bestMove && <div className="best-move-card"><strong>Best Territorial Swing:</strong> {moveLabel(bestMove)}</div>}
                 {topMoves.length>0&&<><h3>Top Territorial Swings</h3>{topMoves.map((m,i)=><HistItem key={i} m={m}/>)}</>}
                 {state?.board && <div className="emoji-board-card"><div className="muted">Emoji Board</div><pre>{buildEmojiBoard(state.board)}</pre><button className="bcopy" onClick={async()=>{try{await navigator.clipboard.writeText(buildEmojiBoard(state.board));setCopied(true);setTimeout(()=>setCopied(false),2000);}catch{}}}>{copied?"✓ Copied":"Copy board"}</button></div>}
-                {state?.board && <div className="emoji-board-card"><div className="muted">Emoji Board</div><pre>{buildEmojiBoard(state.board)}</pre><button className="bcopy" onClick={async()=>{try{await navigator.clipboard.writeText(buildEmojiBoard(state.board));setCopied(true);setTimeout(()=>setCopied(false),2000);}catch{}}}>{copied?"✓ Copied":"Copy board"}</button></div>}
 
                 {/* Share card */}
                 {shareText&&(
@@ -1573,7 +1727,7 @@ export default function Home() {
 
       /* board */
       .bwrap{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px;overflow-x:auto}
-      .board-wrap{position:relative;width:100%;overflow-x:auto;display:flex;justify-content:center;-webkit-overflow-scrolling:touch}
+      .board-wrap{width:100%;overflow-x:auto;display:flex;justify-content:center;-webkit-overflow-scrolling:touch}
       .board{display:grid;grid-template-columns:repeat(7,58px);gap:5px;justify-content:center;min-width:max-content}
       .board.board-swing{animation:boardpulse 900ms ease both}
       .cell-slot{position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center}
@@ -1591,12 +1745,31 @@ export default function Home() {
       .cell.lg:hover{background:#d0f7d0}
       .cell.dm{opacity:.72;cursor:not-allowed}
       .cell[data-chg]{animation:aclaim 500ms ease forwards}
-      .cell[data-cap]{animation:acap 900ms ease forwards;animation-delay:var(--cap-delay,0ms);animation-fill-mode:both}
+      .cell[data-cap]{animation:acap 900ms ease forwards;animation-delay:calc(var(--cap-order,0) * 80ms);animation-fill-mode:both}
       .cell[data-lk]{animation:alk 850ms ease forwards;animation-delay:var(--lock-delay,0ms);animation-fill-mode:both}
       .lock-shield{position:absolute;top:-6px;left:-6px;font-size:13px;line-height:1;background:#fff;border:1px solid #111;border-radius:999px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.18);pointer-events:none}
       .cell.threat{box-shadow:inset 0 0 0 2px rgba(37,99,235,.55);background:rgba(37,99,235,.08)}
       .cell.threatMove{outline:2px dashed rgba(37,99,235,.5);outline-offset:-4px}
       .threat-dot{position:absolute;bottom:3px;left:3px;width:7px;height:7px;border-radius:50%;background:#2563eb;box-shadow:0 0 8px rgba(37,99,235,.8);pointer-events:none}
+
+      .cell.bridge-path{animation:bridgeGlow 1.15s ease-in-out 1;box-shadow:0 0 0 3px rgba(245,158,11,.45),0 0 18px rgba(245,158,11,.45)}
+      .cell.lock-neighbor{animation:lockNeighborPulse 900ms ease-in-out 1}
+      .bridge-svg{position:absolute;inset:8px;width:calc(100% - 16px);height:calc(100% - 16px);pointer-events:none;z-index:8;overflow:visible}
+      .bridge-svg polyline{fill:none;stroke:#f59e0b;stroke-width:.08;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 .08rem rgba(245,158,11,.95));stroke-dasharray:8;animation:drawBridge 1.15s ease-out forwards}
+      .what-title{font-size:15px;font-weight:900;margin-top:2px}
+      .what-summary{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+      .what-summary span{background:#fff;border:1px solid #e2e8f0;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800;color:#334155}
+      .report-emoji{font-size:16px;line-height:1.18;background:#0f172a;color:#fff;border-radius:12px;padding:10px;margin:10px 0 0;letter-spacing:1px;display:inline-block}
+      .report-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+
+
+      .tutorial-card{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:80;background:#111827;color:#fff;border:1px solid rgba(255,255,255,.18);box-shadow:0 12px 36px rgba(15,23,42,.35);border-radius:16px;padding:13px 16px;width:min(520px,calc(100% - 28px))}
+      .tutorial-head{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#cbd5e1;font-weight:900;margin-bottom:7px}
+      .tutorial-head button{border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.08);color:#fff;border-radius:999px;padding:4px 10px;font-weight:800;cursor:pointer}
+      .tutorial-copy{font-size:14px;line-height:1.45;font-weight:700}.tutorial-copy strong{color:#fde68a}
+      .tutorial-dots{display:flex;gap:5px;margin-top:9px}.tutorial-dots span{width:8px;height:8px;border-radius:99px;background:#475569}.tutorial-dots span.on{background:#facc15;width:18px}
+      .sound-toggle{min-width:84px}
+
       /* ── Letter Market ─────────────────────────────────────────────────── */
       .lm-panel{background:#fff;border:1.5px solid #e0e0e0;border-radius:14px;padding:10px 14px;margin-bottom:10px}
       .lm-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
@@ -1717,15 +1890,6 @@ export default function Home() {
       .pvcap{color:#e65c00;font-weight:800;font-size:13px}
       @keyframes ainpath{0%{box-shadow:inset 0 0 0 3px #e65c00}100%{box-shadow:inset 0 0 0 3px #ff8c00}}
       @keyframes aclaim{0%{transform:scale(1.12)}100%{transform:scale(1)}}
-      /* Bridge flash — board glows teal when BRIDGE fires */
-      @keyframes abridge{0%{box-shadow:inset 0 0 0 0 rgba(29,155,117,0)}40%{box-shadow:inset 0 0 0 6px rgba(29,155,117,.55)}100%{box-shadow:inset 0 0 0 0 rgba(29,155,117,0)}}
-      .board-bridge{animation:abridge 900ms ease forwards}
-      /* End-game flood */
-      @keyframes aflood{0%{opacity:0;transform:scale(.94)}30%{opacity:.18}70%{opacity:.22}100%{opacity:0;transform:scale(1.04)}}
-      .end-flood{position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:20;animation:aflood 2.4s ease forwards}
-      .flood-red{background:#e63946}
-      .flood-blue{background:#1d3557}
-      .flood-draw{background:#555}
       @keyframes boardpulse{0%{transform:scale(1);filter:saturate(1)}35%{transform:scale(1.018);filter:saturate(1.28)}100%{transform:scale(1);filter:saturate(1)}}
       @keyframes acap{0%{transform:scale(.92);filter:saturate(1);box-shadow:0 0 0 0 rgba(250,204,21,0)}35%{transform:scale(1.18);background:#fde68a;filter:saturate(1.9);box-shadow:0 0 0 6px rgba(250,204,21,.28)}70%{transform:scale(.96);box-shadow:0 0 0 2px rgba(250,204,21,.14)}100%{transform:scale(1)}}
       @keyframes alk{0%{box-shadow:0 0 0 8px #111 inset,0 0 0 0 rgba(17,17,17,.7);transform:scale(1.08)}45%{box-shadow:0 0 0 3px #111 inset,0 0 0 8px rgba(17,17,17,.12);transform:scale(.98)}100%{transform:scale(1)}}
