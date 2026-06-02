@@ -1149,6 +1149,9 @@ export default function Home() {
   // ── render ────────────────────────────────────────────────────────────────
   return <>
     <Head>
+        <link rel="preconnect" href="https://fonts.googleapis.com"/>
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous"/>
+        <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet"/>
       {/* ③ SEO + social meta tags */}
       <title>Word Territory{dailyMode&&dailyInfo?` · Daily #${dailyInfo.dayNumber}`:""}</title>
       <meta name="description" content="Word Territory is a word-powered territory strategy game where words become the map. Play the Daily Challenge!" />
@@ -1292,7 +1295,7 @@ export default function Home() {
                         {state?.winner && state.winner !== "" && (
               <div className={`end-flood ${state.winner==="RED"?"flood-red":state.winner==="BLUE"?"flood-blue":"flood-draw"}`} key={`flood-${state.winner}`}/>
             )}
-            <div className="board-wrap"><div className={`board ${boardOpeningClass} ${spectatorMode ? "board-demo" : ""} ${lastMoveIsSwing ? "board-swing" : "" ${bridgeFlash ? "board-bridge" : ""}`}>
+            <div className="board-wrap"><div className={`board ${boardOpeningClass} ${spectatorMode ? "board-demo" : ""} ${lastMoveIsSwing ? "board-swing" : ""} ${bridgeFlash ? "board-bridge" : ""}`}>
               {state.board.map(row=>row.map(cell=>{
                 const k=asKey(cell.row,cell.col);
                 const vp = Array.isArray(valuePrev)
@@ -1700,14 +1703,17 @@ export default function Home() {
     </main>
 
     <style jsx global>{`
+      @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap');
+
       *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-      body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;background:#f0f2f5;color:#111;font-size:15px}
+      body{font-family:'Space Grotesk',-apple-system,BlinkMacSystemFont,sans-serif;background:#f0f2f5;color:#111;font-size:15px}
+      button,input,select,textarea{font-family:inherit}
       .loading{padding:30px;text-align:center}
       .page{padding:14px;max-width:1400px;margin:0 auto}
 
       /* header */
       .hdr{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px}
-      .hdr-l h1{font-size:22px;letter-spacing:2px;font-weight:900}
+      .hdr-l h1{font-family:'Space Grotesk',sans-serif;font-size:22px;letter-spacing:.04em;font-weight:700}
       .sub{font-size:12px;color:#666;margin-top:2px}
       .tagline{font-size:12px;color:#111;font-weight:800;margin-top:4px;letter-spacing:.2px}
       .dpill{display:inline-block;background:#111;color:#fff;font-size:11px;border-radius:999px;padding:2px 9px;margin-left:8px;font-weight:700;vertical-align:middle}
@@ -1792,7 +1798,7 @@ export default function Home() {
       .board.board-swing{animation:boardpulse 900ms ease both}
       .board-demo .cell{opacity:1!important;filter:none!important}
       .cell-slot{position:relative;width:var(--cell);height:var(--cell);display:flex;align-items:center;justify-content:center}
-      .cell{position:relative;width:var(--cell);height:var(--cell);border:1px solid #d8d2c4;border-radius:12px;background:#f7f3ea;font-size:19px;font-weight:900;cursor:pointer;transition:background .16s, transform .12s, box-shadow .16s,color .16s;color:#1f2933;box-shadow:inset 0 1px 0 rgba(255,255,255,.65),0 2px 7px rgba(31,41,51,.10);font-feature-settings:"kern" 1;user-select:none}
+      .cell{position:relative;width:var(--cell);height:var(--cell);border:1px solid #d8d2c4;border-radius:12px;background:#f7f3ea;font-family:"Space Grotesk",system-ui,sans-serif;font-size:20px;font-weight:700;letter-spacing:-.01em;cursor:pointer;transition:background .16s, transform .12s, box-shadow .16s,color .16s;color:#1f2933;box-shadow:inset 0 1px 0 rgba(255,255,255,.65),0 2px 7px rgba(31,41,51,.10);font-feature-settings:"kern" 1;user-select:none}
       .cell.cr{background:rgba(216,92,92,.28);border-color:rgba(216,92,92,.58);color:#7a2424;box-shadow:inset 0 1px 0 rgba(255,255,255,.52),0 2px 8px rgba(216,92,92,.12)}
       .cell.cb{background:rgba(79,131,204,.30);border-color:rgba(79,131,204,.58);color:#173e74;box-shadow:inset 0 1px 0 rgba(255,255,255,.52),0 2px 8px rgba(79,131,204,.13)}
       .cell.ft{border:2px solid rgba(17,24,39,.78);box-shadow:inset 0 0 0 3px rgba(17,24,39,.18),inset 0 1px 0 rgba(255,255,255,.55),0 2px 7px rgba(17,24,39,.16)}
@@ -1897,7 +1903,7 @@ export default function Home() {
       /* Synergy flash */
       .synergy-flash{background:linear-gradient(90deg,#1e1b4b,#312e81);color:#c7d2fe;
                      font-size:13px;font-weight:700;padding:7px 14px;border-radius:8px;
-                     text-align:center;margin-bottom:4px;letter-spacing:.3px}
+                     text-align:center;margin-bottom:4px;letter-spacing:.3pxfont-family:'Space Grotesk',sans-serif;font-weight:700;}
       .syn-difficulty{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;
                       border-radius:20px;margin-bottom:6px;letter-spacing:.5px}
       [data-diff="Easy"]{background:#dcfce7;color:#166534}
@@ -1911,7 +1917,7 @@ export default function Home() {
       .winner-banner{background:#111;color:#fff;text-align:center;padding:14px;font-size:22px;
                      font-weight:900;border-radius:12px;margin-bottom:8px;letter-spacing:1px}
       .battle-title{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#94a3b8;margin-bottom:4px}
-      .winner-score{font-size:16px;font-weight:400;color:#aaa;margin-left:8px}
+      .winner-score{font-size:16px;font-weight:400;color:#aaa;margin-left:8pxfont-family:'Space Grotesk',sans-serif;}
       .best-move-inline{font-size:13px;color:#f8fafc;margin-top:4px;letter-spacing:.2px}
       .best-move-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;margin:12px 0;font-size:13px;color:#111}
       .battle-report-card{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:14px;margin-bottom:10px;box-shadow:0 6px 24px rgba(15,23,42,.06)}
