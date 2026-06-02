@@ -12,11 +12,14 @@ import {
 const asKey = (r, c) => `${r}-${c}`;
 const adj    = (a, b) => Math.abs(a.row - b.row) + Math.abs(a.col - b.col) === 1;
 // 案4: territory count is primary victory condition (Othello-style)
-const tScore = (st, p) => !st ? 0 : p === "RED"
-  ? st.scores.redTerritory
-  : st.scores.blueTerritory;
-const tScoreWord = (st, p) => !st ? 0 : p === "RED"
-  ? st.scores.redWord : st.scores.blueWord;
+const tScore = (st, p) => {
+  if (!st || !st.scores) return 0;
+  return p === "RED" ? (st.scores.redTerritory || 0) : (st.scores.blueTerritory || 0);
+};
+const tScoreWord = (st, p) => {
+  if (!st || !st.scores) return 0;
+  return p === "RED" ? (st.scores.redWord || 0) : (st.scores.blueWord || 0);
+};
 const wScore = w => ({ 3:1,4:2,5:3,6:5 }[w?.length] || 0);
 
 const OPENING_NOTES = {
@@ -835,7 +838,7 @@ export default function Home() {
     if (!state) return "";
     return path.map(p => {
       if (placed && placed.row === p.row && placed.col === p.col) return letter || "";
-      return state.board[p.row][p.col].letter || "";
+      return state?.board?.[p.row]?.[p.col]?.letter || "";
     }).join("");
   }, [state, path, placed, letter]);
 
@@ -865,7 +868,8 @@ export default function Home() {
     const BS = state.board.length;
     for (let r = 0; r < BS; r++) {
       for (let c = 0; c < BS; c++) {
-        const cell = state.board[r][c];
+        const cell = state?.board?.[r]?.[c];
+    if (!cell) return;
         if (cell.letter && cell.owner === opponent && !cell.fortified) {
           for (const [nr, nc] of [[r-1,c],[r+1,c],[r,c-1],[r,c+1]]) {
             if (nr>=0&&nr<BS&&nc>=0&&nc<BS&&!state.board[nr][nc].letter) {
@@ -884,24 +888,26 @@ export default function Home() {
     if (!path.length) return new Set();
     const s = new Set();
     path.forEach(p => {
-      const cell = state?.board[p.row][p.col];
+      const cell = state?.board?.[p.row]?.[p.col];
       if (cell?.owner === opponent) s.add(asKey(p.row, p.col));
     });
     return s;
   }, [path, state?.turn]);
   const hasNbr = (r,c) => {
-    const b = state.board;
+    const b = state?.board;
+    if (!Array.isArray(b) || !b[r] || !b[r][c]) return false;
     const BS = b.length - 1;  // dynamic board size (6 for 7x7)
-    return (r>0&&b[r-1][c].letter)||(r<BS&&b[r+1][c].letter)||(c>0&&b[r][c-1].letter)||(c<BS&&b[r][c+1].letter);
+    return (r>0&&b[r-1]?.[c]?.letter)||(r<BS&&b[r+1]?.[c]?.letter)||(c>0&&b[r]?.[c-1]?.letter)||(c<BS&&b[r]?.[c+1]?.letter);
   };
-  const isLegal = (r,c) => state && !state.board[r][c].letter && hasNbr(r,c);
+  const isLegal = (r,c) => !!(state?.board?.[r]?.[c]) && !state.board[r][c].letter && hasNbr(r,c);
   const isDim = (r,c) => {
     if (!state) return true;
     // In Spectator Mode and Battle Report, the board is display-first.
     // Do not dim it just because the user cannot click.
     if (spectatorMode || state.winner) return false;
     if (!human()) return true;
-    const cell = state.board[r][c];
+    const cell = state?.board?.[r]?.[c];
+    if (!cell) return true;
     // Already selected cells are not dim but not clickable again
     if (isSel(r,c)) return false;
     // Phase 0: nothing selected yet
