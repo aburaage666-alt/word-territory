@@ -76,6 +76,8 @@ class GameState(BaseModel):
 
 class CreateGameRequest(BaseModel):
     botLevel: BotLevel = "normal"
+    spectatorSeed: Optional[int] = None
+    showcase: bool = False
 
 
 class CreateGameResponse(BaseModel):
