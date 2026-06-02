@@ -1,7 +1,9 @@
 import json
+import random
 import sqlite3
 import uuid
 from pathlib import Path
+from spectator_seed import SHOWCASE_SEED, SHOWCASE_OPENING_IDX, SHOWCASE_SYNERGY
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -120,7 +122,26 @@ DAILY_SCORES: dict[str, list[dict]] = {}
 @app.post("/games", response_model=CreateGameResponse)
 def create_game(payload: CreateGameRequest = CreateGameRequest()):
     game_id = str(uuid.uuid4())
-    state = build_initial_state(bot_level=payload.botLevel)
+
+    if payload.showcase or payload.spectatorSeed is not None:
+        seed = payload.spectatorSeed if payload.spectatorSeed is not None else SHOWCASE_SEED
+        old_rng = random.getstate()
+        random.seed(seed)
+        try:
+            state = build_initial_state(
+                bot_level=payload.botLevel,
+                opening_idx=SHOWCASE_OPENING_IDX if payload.showcase else None,
+            )
+            if payload.showcase:
+                state.synergyOptions = [SHOWCASE_SYNERGY, "FRONTLINE_TACTICIAN", "TRAP_SETTER"]
+                state.selectedSynergy = SHOWCASE_SYNERGY
+                state.synergyState = {}
+                state.botStyle = "Showcase"
+        finally:
+            random.setstate(old_rng)
+    else:
+        state = build_initial_state(bot_level=payload.botLevel)
+
     GAMES[game_id] = state
     return CreateGameResponse(game_id=game_id, state=state)
 
