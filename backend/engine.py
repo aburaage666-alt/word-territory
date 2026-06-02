@@ -274,6 +274,41 @@ def _is_ui_word(word: str) -> bool:
     return True
 
 
+# Demo Dictionary: stricter than UI hints.
+# These words are preferred/allowed for Watch Demo and trailer-style bot play.
+# The goal is not to make the strongest dictionary player; it is to make the
+# map-changing moment readable to a first-time viewer.
+_DEMO_WORD_PROMOTE = frozenset({
+    'STONE','WATER','BRIDGE','GARDEN','PLANT','MARKET','CIRCLE','LIGHT','RIVER',
+    'TRAIN','TRAIL','ROPE','HOPE','FIND','FINE','LINE','LINK','LAND','ROAD','PATH',
+    'STAR','ROSE','TREE','ROOT','LEAF','FIELD','HOUSE','HOME','WALL','GATE',
+    'CART','CARE','RATE','TEAR','NEAR','EARN','EAST','WEST','NORTH','SOUTH',
+    'CONE','NOTE','TONE','BONE','RING','WING','KING','SING','HAND','HARD',
+})
+_DEMO_WORD_EXCLUDE = frozenset({
+    # keep demo/trailer away from dictionary trivia and abbreviations
+    'IRE','DISC','WREN','WRET','THUS','CHUB','HULK','HULL','GLIB','BIFF',
+    'MPH','ETC','LIB','TBSP','TSP','VAR','FARO','TARO','GEN','TOSH','LENO',
+})
+
+def _is_demo_word(word: str) -> bool:
+    w = word.upper().strip()
+    if w in _DEMO_WORD_EXCLUDE:
+        return False
+    if not _is_ui_word(w):
+        return False
+    # Demo should mostly show obvious, readable words.
+    # Allow a promoted set and ordinary-looking 4–6 letter words with enough vowels.
+    if w in _DEMO_WORD_PROMOTE:
+        return True
+    vowels = sum(1 for ch in w if ch in 'AEIOU')
+    if len(w) == 3:
+        return False
+    if len(w) >= 4 and vowels >= 2:
+        return True
+    return False
+
+
 # ── Letter Market ─────────────────────────────────────────────────────────────
 
 # English letter frequency (rough weights)
@@ -893,6 +928,7 @@ def get_letter_preview_moves(state: GameState, letter: str, limit: int = 12) -> 
         return []
 
     excluded = set(state.usedWords)
+    player = state.currentPlayer
     try:
         raw_moves = _fast_bot_moves_for_letter(state, letter, max_results=limit * 4, excluded=excluded)
     except Exception:
@@ -1823,6 +1859,83 @@ def choose_bot_move(state: GameState):
             best_value = value
             best_move = move
     return best_move
+
+
+
+def choose_demo_bot_move(state: GameState):
+    """Trailer / Watch Demo move picker.
+
+    This deliberately favors readable, map-changing turns over raw win rate.
+    It makes Spectator Mode useful as a 30-second explanation tool.
+    """
+    legal_moves = _fast_bot_moves(state, max_len=5, max_results=28, excluded=set(state.usedWords))
+    if not legal_moves:
+        return choose_bot_move(state)
+
+    player = state.currentPlayer
+    best_move = None
+    best_value = -10**9
+
+    for move in legal_moves:
+        try:
+            ns = simulate_move(state, move)
+            last = ns.moveHistory[-1]
+        except Exception:
+            continue
+
+        word = (last.word or "").upper()
+        combos = last.comboLabels or []
+        is_demo = _is_demo_word(word)
+
+        value = 0
+        value += last.territoryGained * 2.2
+        value += last.captureCount * 10
+        value += last.fortifiedCellsGained * 4
+        value += word_score(word) * 1.2
+        value += 9 if "BRIDGE" in combos else 0
+        value += 7 if "CUT" in combos else 0
+        value += 6 if "FORTIFY CHAIN" in combos else 0
+        value += 5 if "DOUBLE CAPTURE" in combos else 0
+        value += 3 if "LONG PATH" in combos else 0
+        value += 10 if any(str(c).startswith("SYNERGY") for c in combos) else 0
+
+        # demo readability
+        if word in _DEMO_WORD_PROMOTE:
+            value += 7
+        if not is_demo:
+            value -= 12
+        if len(word) == 3 and last.captureCount == 0 and "BRIDGE" not in combos:
+            value -= 4
+
+        # prefer visible map changes over tiny score nudges
+        if last.territoryGained < 3 and not combos:
+            value -= 5
+
+        # Don't make the same kind of tiny move again and again.
+        if state.moveHistory:
+            prev = state.moveHistory[-1]
+            if prev.moveType == "WORD" and prev.word and len(prev.word) == len(word) == 3:
+                value -= 3
+
+        if value > best_value:
+            best_value = value
+            best_move = move
+
+    return best_move or choose_bot_move(state)
+
+
+def apply_demo_bot_move(state: GameState):
+    if state.winner:
+        return state
+    move = choose_demo_bot_move(state)
+    if move:
+        try:
+            return validate_and_apply_move(
+                state, move["row"], move["col"], move["letter"], move["path"]
+            )
+        except Exception:
+            pass
+    return apply_bot_move(state)
 
 
 def choose_seed_move(state: GameState):
