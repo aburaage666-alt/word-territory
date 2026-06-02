@@ -109,10 +109,16 @@ app = FastAPI(title="Word Territory API")
 # CORSMiddleware does NOT add headers to unhandled 500 errors in sync routes.
 # This raw ASGI middleware fires unconditionally before everything else.
 
-ALLOWED_ORIGINS = {
-    "https://word-territory1.onrender.com",
-    "http://localhost:3000",
-}
+# Allow all browser origins. The frontend does not use credentials/cookies.
+# This prevents backend 500s from being masked as a CORS-only error in the browser.
+ALLOWED_ORIGINS = {"*"}
+
+def _cors_headers_for_origin(origin: str):
+    return [
+        (b"access-control-allow-origin", origin.encode() if origin else b"*"),
+        (b"access-control-allow-methods", b"*"),
+        (b"access-control-allow-headers", b"*"),
+    ]
 
 class ForceCORSMiddleware:
     """Raw ASGI middleware: adds CORS headers to EVERY response, including 500s."""
@@ -130,14 +136,7 @@ class ForceCORSMiddleware:
                 origin = v.decode()
                 break
 
-        cors_headers = []
-        if origin in ALLOWED_ORIGINS:
-            cors_headers = [
-                (b"access-control-allow-origin",      origin.encode()),
-                (b"access-control-allow-credentials", b"true"),
-                (b"access-control-allow-methods",     b"*"),
-                (b"access-control-allow-headers",     b"*"),
-            ]
+        cors_headers = _cors_headers_for_origin(origin)
 
         # Handle preflight
         if scope["type"] == "http" and scope.get("method") == "OPTIONS":
@@ -180,6 +179,22 @@ GAMES: dict[str, GameState] = {}
 # In-memory daily leaderboard. Resets on server restart.
 # Production upgrade path: replace with SQLite or Redis.
 DAILY_SCORES: dict[str, list[dict]] = {}
+
+def _model_payload(obj):
+    """Pydantic v1/v2 compatible JSON-safe payload."""
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump(mode="json")
+    return json.loads(obj.json())
+
+def _state_response(state: GameState, status_code: int = 200):
+    return JSONResponse(content=_model_payload(state), status_code=status_code)
+
+def _safe_turn_fallback(state: GameState):
+    """Never let bot/demo endpoints return a raw 500 just because the engine had a bad turn."""
+    try:
+        return pass_turn(state)
+    except Exception:
+        return state
 
 
 @app.post("/games", response_model=CreateGameResponse)
@@ -261,7 +276,7 @@ def get_suggestions(game_id: str):
     return SuggestionsResponse(suggestions=find_candidate_words(state))
 
 
-@app.post("/games/{game_id}/bot-move", response_model=GameState)
+@app.post("/games/{game_id}/bot-move")
 def bot_move(game_id: str):
     state = GAMES.get(game_id)
     if not state:
@@ -269,10 +284,7 @@ def bot_move(game_id: str):
     if state.currentPlayer != state.botPlayer:
         raise HTTPException(status_code=400, detail="It is not the bot's turn")
 
-    import concurrent.futures, random, traceback as _tb
-
-    # `demo` is False for regular games (True only in spectator/auto-move)
-    demo = False
+    import concurrent.futures, traceback as _tb
 
     def run_bot():
         return apply_bot_move(state)
@@ -282,20 +294,15 @@ def bot_move(game_id: str):
             future = ex.submit(run_bot)
             next_state = future.result(timeout=4)
     except Exception as _e:
-        # Catches both TimeoutError and any engine crash
-        print(f"[bot-move] fallback: {type(_e).__name__}: {_e}", flush=True)
+        print(f"[bot-move] safe fallback: {type(_e).__name__}: {_e}", flush=True)
         print(_tb.format_exc(), flush=True)
-        # Safe fallback: pass the turn so the game never hangs
-        try:
-            next_state = pass_turn(state)
-        except Exception:
-            raise HTTPException(status_code=500, detail="Bot move failed")
+        next_state = _safe_turn_fallback(state)
 
     GAMES[game_id] = next_state
-    return next_state
+    return _state_response(next_state)
 
 
-@app.post("/games/{game_id}/auto-move", response_model=GameState)
+@app.post("/games/{game_id}/auto-move")
 def auto_move(game_id: str, demo: bool = False):
     """Spectator / demo mode: let the current player be controlled by bot logic.
 
@@ -306,9 +313,9 @@ def auto_move(game_id: str, demo: bool = False):
     if not state:
         raise HTTPException(status_code=404, detail="Game not found")
     if state.winner:
-        return state
+        return _state_response(state)
 
-    import concurrent.futures, random
+    import concurrent.futures, random, traceback as _tb
 
     def run_bot():
         return apply_demo_bot_move(state) if demo else apply_bot_move(state)
@@ -317,7 +324,9 @@ def auto_move(game_id: str, demo: bool = False):
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             future = ex.submit(run_bot)
             next_state = future.result(timeout=4)
-    except concurrent.futures.TimeoutError:
+    except Exception as _e:
+        print(f"[auto-move] safe fallback: {type(_e).__name__}: {_e}", flush=True)
+        print(_tb.format_exc(), flush=True)
         board = state.board
         legal = [
             (r, c)
@@ -330,15 +339,18 @@ def auto_move(game_id: str, demo: bool = False):
             )
         ]
         if legal:
-            row, col = random.choice(legal)
-            import string
-            letter = random.choice(string.ascii_uppercase)
-            next_state = apply_seed_move(state, row, col, letter)
+            try:
+                row, col = random.choice(legal)
+                import string
+                letter = random.choice(string.ascii_uppercase)
+                next_state = apply_seed_move(state, row, col, letter)
+            except Exception:
+                next_state = _safe_turn_fallback(state)
         else:
-            next_state = pass_turn(state)
+            next_state = _safe_turn_fallback(state)
 
     GAMES[game_id] = next_state
-    return next_state
+    return _state_response(next_state)
 
 
 # ── Health check (for UptimeRobot / monitoring — accepts GET and HEAD) ────────
