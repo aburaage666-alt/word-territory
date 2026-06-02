@@ -22,10 +22,13 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
 }
 
 export async function createGame(options = {}) {
+  const payload = { botLevel: options.botLevel || "normal" };
+  if (options.spectatorSeed !== undefined) payload.spectatorSeed = options.spectatorSeed;
+  if (options.showcase !== undefined) payload.showcase = !!options.showcase;
   const res = await fetchWithTimeout(`${API_BASE}/games`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ botLevel: options.botLevel || "normal" }),
+    body: JSON.stringify(payload),
   });
   return readJson(res);
 }
