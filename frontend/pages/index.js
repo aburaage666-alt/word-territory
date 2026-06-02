@@ -314,7 +314,10 @@ export default function Home() {
   // UI panels
   const [showRules,   setRules]   = useState(false);
   const [showHistory, setHistory] = useState(true);
-  const [showSuggest, setSuggest] = useState(true);
+  const [showSuggest, setSuggest] = useState(false);
+  const [showAlmost,  setAlmostOpen] = useState(true);
+  const [showThreatPanel, setThreatPanel] = useState(false);
+  const [mobileTab, setMobileTab] = useState("hints"); // hints | history | threat
   const [showLB,      setShowLB]  = useState(false);  // ④
 
   // Combo banner persistence
@@ -1035,6 +1038,15 @@ export default function Home() {
     (lastMove.comboLabels || []).some(x => String(x).includes("BRIDGE") || String(x).includes("SYNERGY") || String(x).includes("CAPTURE"))
   );
 
+  const boardOpeningClass = `opening-${String(state?.openingName || "plain").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-opening$/,"").replace(/^-|-$/g,"") || "plain"}`;
+  const boardBannerText = lastMoveIsSwing && lastMove ? [
+    (lastMove.captureCount||0)>0 ? `Captured ${lastMove.captureCount} cell${lastMove.captureCount===1?"":"s"}` : null,
+    (lastMove.comboLabels||[]).some(x=>String(x).includes("BRIDGE")) ? "Bridge connected zones" : null,
+    (lastMove.fortifiedCellsGained||0)>0 ? `Locked ${lastMove.fortifiedCellsGained} cell${lastMove.fortifiedCellsGained===1?"":"s"}` : null,
+    (lastMove.comboLabels||[]).some(x=>String(x).startsWith("SYNERGY:")) ? "Synergy activated" : null,
+    (lastMove.territoryGained||0)>=5 ? `Territory Swing +${lastMove.territoryGained}` : null,
+  ].filter(Boolean).join(" · ") : "";
+
   const lastMoveHasBridge = !!lastMove && (lastMove.comboLabels || []).some(x => String(x).includes("BRIDGE"));
   const bridgePathSet = useMemo(() => {
     const s = new Set();
@@ -1265,27 +1277,15 @@ export default function Home() {
       {synergyFlash&&<div className="bnr synergy-flash">{synergyFlash}</div>}
           {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
       {error&&<div className="bnr err">{error}<button className="bx" onClick={()=>setError("")}>✕</button></div>}
-      {lastMove && lastMove.moveType !== "PASS" && lastMoveIsSwing && (
-        <div className={`what-card ${lastMoveIsSwing ? "what-swing" : ""}`}>
-          <div className="what-kicker">What happened?</div>
-          <div className="what-title">{compactMoveTitle(lastMove)}</div>
-          <div className="what-summary">
-            {(lastMove.territoryGained||0)>0 && <span>Territory Swing +{lastMove.territoryGained}</span>}
-            {(lastMove.captureCount||0)>0 && <span>Captured {lastMove.captureCount} cell{lastMove.captureCount===1?"":"s"}</span>}
-            {(lastMove.fortifiedCellsGained||0)>0 && <span>Locked {lastMove.fortifiedCellsGained} cell{lastMove.fortifiedCellsGained===1?"":"s"}</span>}
-          </div>
-          <div className="what-lines">
-            {lastMoveInsights.slice(1,5).map((line,i)=><span key={i}>{line}</span>)}
-          </div>
-        </div>
-      )}
+      
+
 
       {/* ── layout ── */}
       <div className="layout">
         <div className="bcol">
           {/* board */}
           <div className="bwrap">
-            <div className="board-wrap"><div className={`board ${spectatorMode ? "board-demo" : ""} ${lastMoveIsSwing ? "board-swing" : ""}`}>
+            <div className="board-wrap"><div className={`board ${boardOpeningClass} ${spectatorMode ? "board-demo" : ""} ${lastMoveIsSwing ? "board-swing" : ""}`}>
               {state.board.map(row=>row.map(cell=>{
                 const k=asKey(cell.row,cell.col);
                 const vp = Array.isArray(valuePrev)
@@ -1316,6 +1316,7 @@ export default function Home() {
                   <polyline points={bridgeSvgPoints} />
                 </svg>
               )}
+              {boardBannerText && <div className="board-event-banner">{boardBannerText}</div>}
             </div>
           </div>
 
@@ -1332,7 +1333,7 @@ export default function Home() {
                 </span>
                 {bestMove && <div className="best-move-inline">Best Territorial Swing: <strong>{moveLabel(bestMove)}</strong></div>}
               </div>
-              <div className="battle-report-card">
+              <div className="battle-report-card report-polished">
                 <div className="report-head">
                   <div><span className="report-kicker">Battle Report Card</span><strong>{state.openingName}</strong></div>
                   <div className="report-score"><span>🔴 {redT}</span><span>🔵 {blueT}</span></div>
@@ -1506,7 +1507,12 @@ export default function Home() {
         </div>
 
         {/* side panel */}
-        <div className="scol">
+        <div className="mobile-tabs">
+          <button className={mobileTab==="hints" ? "active" : ""} onClick={()=>setMobileTab("hints")}>Hints</button>
+          <button className={mobileTab==="threat" ? "active" : ""} onClick={()=>setMobileTab("threat")}>Threat</button>
+          <button className={mobileTab==="history" ? "active" : ""} onClick={()=>setMobileTab("history")}>History</button>
+        </div>
+        <div className={`scol tab-${mobileTab}`}>
           {synergy && (() => { const sc = synergyOpts.find(c=>c.key===synergy); return sc ? (
             <div className="syn-active">
               {sc.icon} <strong>{sc.name}</strong>
@@ -1514,18 +1520,21 @@ export default function Home() {
             </div>
           ) : null; })()}
           {almost.length > 0 && (
-            <div className={`almost-box ${comebackChance ? "comeback-box" : ""}`}>
-              <div className="almost-title">{comebackChance ? "🔥 Comeback chance! One letter can swing the map:" : "🀄 Almost — place one letter to make:"}</div>
-              <div className="almost-list">
+            <div className={`panel panel-almost ${comebackChance ? "comeback-box" : ""}`}>
+              <div className="ph" onClick={()=>setAlmostOpen(v=>!v)}>
+                <span>{comebackChance ? "🔥 Comeback chance" : "🀄 Almost"}</span><span className="ci">{showAlmost?"▲":"▼"}</span>
+              </div>
+              {showAlmost && <div className="almost-list">
+                <div className="almost-title">{comebackChance ? "One letter can swing the map:" : "Place one letter to make:"}</div>
                 {almost.map((a,i) => (
                   <span key={i} className="almost-chip">
                     +<strong>{a.needs}</strong> → {a.word}
                   </span>
                 ))}
-              </div>
+              </div>}
             </div>
           )}
-          <div className="panel">
+          <div className="panel panel-suggest">
             <div className="ph" onClick={()=>setSuggest(v=>!v)}>
               <span>💡 Suggested</span><span className="ci">{showSuggest?"▲":"▼"}</span>
             </div>
@@ -1535,7 +1544,22 @@ export default function Home() {
               </div>
             )}
           </div>
-          <div className="panel">
+                    <div className="panel panel-threat">
+            <div className="ph" onClick={()=>setThreatPanel(v=>!v)}>
+              <span>⚠ Threat</span><span className="ci">{showThreatPanel?"▲":"▼"}</span>
+            </div>
+            {showThreatPanel&&(
+              <div className="threat-list">
+                {threats && threats.length ? threats.slice(0,5).map((t,i)=>(
+                  <div className="threat-row" key={i}>
+                    <strong>{t.word || "Capture threat"}</strong>
+                    <span>{(t.cells||[]).length} cell{(t.cells||[]).length===1?"":"s"} exposed</span>
+                  </div>
+                )) : <div className="muted">No immediate capture threat.</div>}
+              </div>
+            )}
+          </div>
+<div className="panel panel-history">
             <div className="ph" onClick={()=>setHistory(v=>!v)}>
               <span>📋 History</span><span className="ci">{showHistory?"▲":"▼"}</span>
             </div>
@@ -1741,47 +1765,55 @@ export default function Home() {
       .bx{background:none;border:none;cursor:pointer;font-size:16px;color:#8b1a1a}
 
       /* layout */
-      .layout{display:grid;grid-template-columns:1fr 290px;gap:12px;align-items:start}
+      .layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;align-items:start}
       .bcol{display:flex;flex-direction:column;gap:10px}
 
-      /* board */
-      .bwrap{background:#fff;border:1px solid #e0e0e0;border-radius:14px;padding:14px;overflow-x:auto}
+      /* board — visual polish */
+      .bwrap{background:linear-gradient(180deg,#fffdf8,#f7f3ea);border:1px solid #ddd6c8;border-radius:18px;padding:16px;overflow-x:auto;box-shadow:0 6px 24px rgba(31,41,51,.06)}
       .board-wrap{width:100%;overflow-x:auto;display:flex;justify-content:center;-webkit-overflow-scrolling:touch}
-      .board{display:grid;grid-template-columns:repeat(7,58px);gap:5px;justify-content:center;min-width:max-content}
+      .board{--cell:52px;--gap:6px;position:relative;display:grid;grid-template-columns:repeat(7,var(--cell));gap:var(--gap);justify-content:center;min-width:max-content;padding:12px;border-radius:20px;background:
+        radial-gradient(circle at 50% 50%,rgba(255,255,255,.42),transparent 52%),
+        linear-gradient(135deg,rgba(255,255,255,.55),rgba(244,239,228,.72));
+        border:1px solid rgba(216,210,196,.9);box-shadow:inset 0 1px 0 rgba(255,255,255,.7),0 12px 28px rgba(31,41,51,.07)}
+      .board.opening-circle{background:radial-gradient(circle at 50% 50%,rgba(245,158,11,.12) 0 32%,transparent 33% 100%),linear-gradient(135deg,#fffdf8,#f4efe4)}
+      .board.opening-bridge{background:linear-gradient(90deg,transparent 0 45%,rgba(245,158,11,.12) 46% 54%,transparent 55% 100%),linear-gradient(135deg,#fffdf8,#f4efe4)}
+      .board.opening-garden{background:radial-gradient(circle at 22% 18%,rgba(34,197,94,.10),transparent 40%),linear-gradient(135deg,#fffdf8,#eff8ef)}
+      .board.opening-stone{background:linear-gradient(135deg,#f8fafc,#e7e5df)}
+      .board.opening-river,.board.opening-water{background:linear-gradient(135deg,rgba(79,131,204,.10) 0 18%,transparent 19% 36%,rgba(79,131,204,.08) 37% 55%,transparent 56%),linear-gradient(135deg,#fffdf8,#eef5fb)}
+      .board.opening-forest,.board.opening-plant{background:linear-gradient(135deg,#fffdf8,#eff8ef)}
+      .board.opening-market{background:linear-gradient(45deg,rgba(245,158,11,.10),transparent 32%),linear-gradient(135deg,#fffdf8,#f4efe4)}
       .board.board-swing{animation:boardpulse 900ms ease both}
-      .cell-slot{position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center}
-      .cell{position:relative;width:44px;height:44px;border:1.5px solid #c8c8c8;border-radius:9px;background:#fafafa;font-size:17px;font-weight:900;cursor:pointer;transition:background .12s, transform .12s, box-shadow .12s;color:#111}
-      .cell.cr{background:rgba(192,57,43,.24);border-color:rgba(192,57,43,.55);color:#7f1d1d}
-      .cell.cb{background:rgba(34,113,179,.24);border-color:rgba(34,113,179,.55);color:#0b4f85}
-      .cell.ft{border-width:3px;border-color:#111;box-shadow:inset 0 0 0 2px rgba(17,17,17,.24),0 1px 6px rgba(17,17,17,.14)}
       .board-demo .cell{opacity:1!important;filter:none!important}
-      .board-demo .cell.cr{background:rgba(220,38,38,.34);border-color:rgba(220,38,38,.75);box-shadow:0 2px 8px rgba(220,38,38,.12)}
-      .board-demo .cell.cb{background:rgba(37,99,235,.34);border-color:rgba(37,99,235,.75);box-shadow:0 2px 8px rgba(37,99,235,.12)}
-      .board-demo .cell:not(.cr):not(.cb){background:#fff;color:#111;border-color:#d1d5db}
-      .cell.sl{outline:3px solid #f0a500;outline-offset:-2px}
-      .cell.pl{box-shadow:inset 0 0 0 3px #111}
-      .cell.lg{background:#e8fce8;border-color:#5cb85c}
-      .cell.lg:hover{background:#d0f7d0}
+      .cell-slot{position:relative;width:var(--cell);height:var(--cell);display:flex;align-items:center;justify-content:center}
+      .cell{position:relative;width:var(--cell);height:var(--cell);border:1px solid #d8d2c4;border-radius:12px;background:#f7f3ea;font-size:19px;font-weight:900;cursor:pointer;transition:background .16s, transform .12s, box-shadow .16s,color .16s;color:#1f2933;box-shadow:inset 0 1px 0 rgba(255,255,255,.65),0 2px 7px rgba(31,41,51,.10)}
+      .cell.cr{background:rgba(216,92,92,.28);border-color:rgba(216,92,92,.58);color:#7a2424;box-shadow:inset 0 1px 0 rgba(255,255,255,.52),0 2px 8px rgba(216,92,92,.12)}
+      .cell.cb{background:rgba(79,131,204,.30);border-color:rgba(79,131,204,.58);color:#173e74;box-shadow:inset 0 1px 0 rgba(255,255,255,.52),0 2px 8px rgba(79,131,204,.13)}
+      .cell.ft{border:2px solid rgba(17,24,39,.78);box-shadow:inset 0 0 0 3px rgba(17,24,39,.18),inset 0 1px 0 rgba(255,255,255,.55),0 2px 7px rgba(17,24,39,.16)}
+      .cell.sl{outline:3px solid #f59e0b;outline-offset:-3px}
+      .cell.pl{box-shadow:inset 0 0 0 3px #111827,0 2px 7px rgba(31,41,51,.12)}
+      .cell.lg{background:#e9f9e7;border-color:#70bf6f;box-shadow:0 0 0 3px rgba(112,191,111,.12),0 2px 7px rgba(31,41,51,.08)}
+      .cell.lg:hover{background:#dff5dc;transform:translateY(-1px)}
       .cell.dm{opacity:.72;cursor:not-allowed}
       .cell[data-chg]{animation:aclaim 500ms ease forwards}
-      .cell[data-cap]{animation:acap 900ms ease forwards;animation-delay:calc(var(--cap-order,0) * 80ms);animation-fill-mode:both}
+      .cell[data-cap]{animation:acap 1050ms cubic-bezier(.2,.8,.2,1) forwards;animation-delay:calc(var(--cap-order,0) * 90ms);animation-fill-mode:both}
       .cell[data-lk]{animation:alk 850ms ease forwards;animation-delay:var(--lock-delay,0ms);animation-fill-mode:both}
-      .lock-shield{position:absolute;top:-6px;left:-6px;font-size:13px;line-height:1;background:#fff;border:1px solid #111;border-radius:999px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.18);pointer-events:none}
-      .cell.threat{box-shadow:inset 0 0 0 2px rgba(37,99,235,.55);background:rgba(37,99,235,.08)}
-      .cell.threatMove{outline:2px dashed rgba(37,99,235,.5);outline-offset:-4px}
-      .threat-dot{position:absolute;bottom:3px;left:3px;width:7px;height:7px;border-radius:50%;background:#2563eb;box-shadow:0 0 8px rgba(37,99,235,.8);pointer-events:none}
-
-      .cell.bridge-path{animation:bridgeGlow 1.15s ease-in-out 1;box-shadow:0 0 0 3px rgba(245,158,11,.45),0 0 18px rgba(245,158,11,.45)}
+      .lock-shield{position:absolute;right:3px;bottom:2px;font-size:10px;line-height:1;background:rgba(255,255,255,.82);border:1px solid rgba(17,24,39,.62);border-radius:999px;padding:1px;box-shadow:0 1px 3px rgba(0,0,0,.14);pointer-events:none}
+      .cell.threat{box-shadow:inset 0 0 0 2px rgba(37,99,235,.48),0 0 0 3px rgba(37,99,235,.08);background:rgba(37,99,235,.08)}
+      .cell.threatMove{outline:2px dashed rgba(37,99,235,.42);outline-offset:-5px}
+      .threat-dot{position:absolute;bottom:4px;left:4px;width:7px;height:7px;border-radius:50%;background:#2563eb;box-shadow:0 0 8px rgba(37,99,235,.75);pointer-events:none}
+      .cell.bridge-path{animation:bridgeGlow 1050ms ease-out 1 forwards}
       .cell.lock-neighbor{animation:lockNeighborPulse 900ms ease-in-out 1}
-      .bridge-svg{position:absolute;inset:8px;width:calc(100% - 16px);height:calc(100% - 16px);pointer-events:none;z-index:8;overflow:visible}
-      .bridge-svg polyline{fill:none;stroke:#f59e0b;stroke-width:.08;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 .08rem rgba(245,158,11,.95));stroke-dasharray:8;animation:drawBridge 1.15s ease-out forwards}
+      .bridge-svg{position:absolute;inset:12px;width:calc(100% - 24px);height:calc(100% - 24px);pointer-events:none;z-index:8;overflow:visible}
+      .bridge-svg polyline{fill:none;stroke:#f59e0b;stroke-width:.055;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 .06rem rgba(245,158,11,.85));stroke-dasharray:8;animation:drawBridge 1200ms ease-out forwards}
+      .board-event-banner{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:24;background:rgba(17,24,39,.92);color:#fff;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:9px 14px;font-size:13px;font-weight:900;letter-spacing:.15px;box-shadow:0 14px 38px rgba(17,24,39,.22);animation:boardBanner 1550ms ease-out forwards;pointer-events:none;white-space:nowrap;max-width:88%;overflow:hidden;text-overflow:ellipsis}
       .what-title{font-size:15px;font-weight:900;margin-top:2px}
       .what-summary{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
       .what-summary span{background:#fff;border:1px solid #e2e8f0;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800;color:#334155}
       .report-emoji{font-size:16px;line-height:1.18;background:#0f172a;color:#fff;border-radius:12px;padding:10px;margin:10px 0 0;letter-spacing:1px;display:inline-block}
       .report-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+      .report-polished{background:linear-gradient(180deg,#ffffff,#f8fafc);border:1px solid #dbe3ef;box-shadow:0 12px 30px rgba(15,23,42,.10)}
+      .report-polished .report-best{background:linear-gradient(90deg,#fef3c7,#fff);border-color:#f59e0b}
       .sound-toggle{min-width:84px}
-
       .opening-note{font-size:12px;color:#4c1d95;font-weight:800;margin-top:3px}
       .come-badge{display:inline-block;margin-left:6px;background:#fef3c7;color:#92400e;border:1px solid #f59e0b;border-radius:999px;padding:2px 7px;font-size:10px;vertical-align:middle;box-shadow:0 0 0 3px rgba(245,158,11,.12)}
       .comeback-box{border-color:#f59e0b!important;background:linear-gradient(90deg,#fff7ed,#fff)!important}
@@ -1797,6 +1829,14 @@ export default function Home() {
       .tut-arrow-cell::after,.tut-cell::after{content:"";position:absolute;left:50%;top:-9px;transform:translateX(-50%);border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid #111827;z-index:44}
       @keyframes tutPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
 
+
+
+      @keyframes acap{0%{transform:scale(.94);background:var(--opp-color);filter:saturate(1);box-shadow:0 0 0 0 rgba(250,204,21,0)}38%{transform:scale(1.17);background:#fde68a;filter:saturate(2.15);box-shadow:0 0 0 7px rgba(250,204,21,.28),0 0 22px rgba(250,204,21,.50)}100%{transform:scale(1);background:var(--my-color);filter:saturate(1.10);box-shadow:inset 0 1px 0 rgba(255,255,255,.55),0 2px 8px rgba(31,41,51,.10)}}
+      @keyframes alk{0%{box-shadow:0 0 0 8px #111827 inset,0 0 0 0 rgba(17,24,39,.60);transform:scale(1.08)}50%{box-shadow:0 0 0 3px #111827 inset,0 0 0 12px rgba(17,24,39,.16);transform:scale(.98)}100%{transform:scale(1)}}
+      @keyframes bridgeGlow{0%{box-shadow:0 0 0 0 rgba(245,158,11,.0);filter:brightness(1)}35%{box-shadow:0 0 0 4px rgba(245,158,11,.34),0 0 18px rgba(245,158,11,.42);filter:brightness(1.16)}100%{box-shadow:inset 0 1px 0 rgba(255,255,255,.55),0 2px 7px rgba(31,41,51,.08);filter:brightness(1)}}
+      @keyframes lockNeighborPulse{0%{box-shadow:0 0 0 0 rgba(17,24,39,.0)}45%{box-shadow:0 0 0 5px rgba(17,24,39,.12)}100%{box-shadow:0 0 0 0 rgba(17,24,39,.0)}}
+      @keyframes drawBridge{0%{stroke-dashoffset:8;opacity:.15}30%{opacity:.96}72%{opacity:.82}100%{stroke-dashoffset:0;opacity:0}}
+      @keyframes boardBanner{0%{opacity:0;transform:translate(-50%,-42%) scale(.95)}16%{opacity:1;transform:translate(-50%,-50%) scale(1)}78%{opacity:1}100%{opacity:0;transform:translate(-50%,-58%) scale(.98)}}
 
       /* ── Letter Market ─────────────────────────────────────────────────── */
       .lm-panel{background:#fff;border:1.5px solid #e0e0e0;border-radius:14px;padding:10px 14px;margin-bottom:10px}
