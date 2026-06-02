@@ -73,8 +73,9 @@ export async function botMove(gameId) {
   return readJson(res);
 }
 
-export async function autoMove(gameId) {
-  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/auto-move`, { method: "POST" });
+export async function autoMove(gameId, demo = false) {
+  const url = `${API_BASE}/games/${gameId}/auto-move${demo ? "?demo=true" : ""}`;
+  const res = await fetchWithTimeout(url, { method: "POST" });
   return readJson(res);
 }
 
