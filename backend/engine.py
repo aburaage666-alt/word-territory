@@ -445,21 +445,20 @@ def _capture_net_pressure(state: GameState, row: int | None, col: int | None, pl
     return adj_enemy >= 2 or (adj_enemy >= 1 and adj_empty <= 1)
 
 
-
-# Synergy must feel like a build moment, not a permanent passive bonus.
-# Caps are per-player, while the no-consecutive rule is global per selected card.
+# BALANCE_PATCH_V3_COMBO_SYNERGY
+# Synergy is separated from ordinary combo labels. COMEBACK / FORTIFY CHAIN
+# remain map-combo labels; only labels prefixed with SYNERGY: are synergy activations.
 _SYNERGY_CAPS = {
-    "BRIDGE_MASTER": 3,
+    "BRIDGE_MASTER": 2,
     "FORTIFIER": 2,
     "CUT_SPECIALIST": 2,
     "CUT_HUNTER": 2,
-    "FRONTLINE_TACTICIAN": 3,
+    "FRONTLINE_TACTICIAN": 2,
     "ENCIRCLER": 3,
     "BORDER_LORD": 4,
     "TRAP_SETTER": 2,
     "COMEBACK_SPARK": 3,
     "SHORT_TACTICIAN": 3,
-    # legacy
     "LONG_WORD": 3,
     "VOWEL_ENGINE": 4,
     "SEED_TACTICIAN": 2,
@@ -473,13 +472,24 @@ def _synergy_can_activate(state: GameState, card: str, player: str) -> bool:
     if not card:
         return False
     ss = state.synergyState or {}
+
+    # Early snowball control: no synergy acceleration in the opening.
+    # The game still has combos, but build-card bonuses start after both sides
+    # have had time to establish territory.
+    try:
+        if int(state.turn) <= 6 and card != "COMEBACK_SPARK":
+            return False
+    except Exception:
+        pass
+
     cap = _SYNERGY_CAPS.get(card, 3)
     try:
         if int(ss.get(_synergy_count_key(card, player), 0)) >= cap:
             return False
     except Exception:
         return False
-    # Prevent the same selected synergy from firing on every single move.
+
+    # Prevent "same card every turn" behavior.
     try:
         if ss.get("lastSynergyCard") == card and int(ss.get("lastSynergyTurn", -999)) >= state.turn - 1:
             return False
@@ -500,22 +510,26 @@ def _synergy_preview_text(state: GameState, combos: list[str], player: str,
                           word: str, letter: str, path=None, row: int | None = None,
                           col: int | None = None) -> str:
     card = state.selectedSynergy
-    if not card:
+    if not card or not _synergy_can_activate(state, card, player):
         return ""
     name = SYNERGY_CARDS.get(card, {}).get('name', 'Synergy')
-    if card == "BRIDGE_MASTER" and "BRIDGE" in combos:
+    has_capture = "CAPTURE" in combos or "DOUBLE CAPTURE" in combos
+    has_bridge = "BRIDGE" in combos
+    has_cut = "CUT" in combos
+
+    if card == "BRIDGE_MASTER" and has_bridge:
         return f"★ {name} ready"
     if card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
         return f"★ {name} ready"
-    if card in ("CUT_SPECIALIST", "CUT_HUNTER") and ("CUT" in combos or (state.synergyState.get("cutPending") and state.synergyState.get("cutPendingFor") == player)):
+    if card in ("CUT_SPECIALIST", "CUT_HUNTER") and has_cut and (has_capture or has_bridge):
         return f"★ {name} ready"
-    if card == "FRONTLINE_TACTICIAN" and _path_touches_enemy(state, path, player) and ("CAPTURE" in combos or "CUT" in combos or "BRIDGE" in combos):
+    if card == "FRONTLINE_TACTICIAN" and _path_touches_enemy(state, path, player) and (has_capture or has_cut):
         return f"★ {name} ready"
     if card == "ENCIRCLER" and _capture_net_pressure(state, row, col, player):
         return f"★ {name} ready"
     if card == "BORDER_LORD" and _path_in_center_zone(path):
         return f"★ {name} ready"
-    if card == "TRAP_SETTER" and state.synergyState.get("trapPending") and state.synergyState.get("trapPendingFor") == player and "CAPTURE" in combos:
+    if card == "TRAP_SETTER" and state.synergyState.get("trapPending") and state.synergyState.get("trapPendingFor") == player and has_capture:
         return f"★ {name} ready"
     if card == "COMEBACK_SPARK":
         opp = other_player(player)
@@ -524,7 +538,7 @@ def _synergy_preview_text(state: GameState, combos: list[str], player: str,
         if (opp_t - my_t) >= 6:
             return f"★ {name} ready"
     if card == "SHORT_TACTICIAN" and len(word) == 3:
-        if "CAPTURE" in combos or _path_touches_enemy(state, path, player):
+        if has_capture or (_path_touches_enemy(state, path, player) and len(path or []) >= 4):
             return f"★ {name} ready"
     # Legacy cards preserved for old saved games
     if card == "PATH_SEEKER" and "LONG PATH" in combos:
@@ -537,17 +551,17 @@ def _synergy_preview_text(state: GameState, combos: list[str], player: str,
         return f"★ {name} ready"
     return ""
 
-
 def apply_synergy_bonus(state: GameState, combos: list[str], player: str,
                         word: str, letter: str, path=None,
                         row: int | None = None, col: int | None = None,
                         territory_gain: int = 0) -> int:
     """Return extra territory from the active terrain-shaped synergy card.
 
-    Tuned after Bot-vs-Bot tests:
-    - cap activations per player
-    - block consecutive same-card activation
-    - tighten Frontline / Trap / Cut so they are tactical moments, not passives
+    V3 balance:
+    - card-specific activation caps
+    - no same-card consecutive activation
+    - no early-turn synergy acceleration
+    - stricter Frontline / Trap / Cut triggers
     """
     card = state.selectedSynergy
     if not card or not _synergy_can_activate(state, card, player):
@@ -561,32 +575,29 @@ def apply_synergy_bonus(state: GameState, combos: list[str], player: str,
     has_bridge = "BRIDGE" in combos
     has_cut = "CUT" in combos
 
-    if card == "BRIDGE_MASTER" and has_bridge:
-        bonus += 2
+    if card == "BRIDGE_MASTER" and has_bridge and (has_capture or territory_gain >= 4):
+        # Was +2 and snowballed. Now it is a small connection reward.
+        bonus += 1
     elif card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
-        bonus += 4 if not state.synergyState.get("firstLockDone") else 1
+        bonus += 2 if not state.synergyState.get("firstLockDone") else 1
     elif card in ("CUT_SPECIALIST", "CUT_HUNTER"):
-        # Cut is powerful; only reward meaningful split pressure.
         if has_cut and (has_capture or has_bridge or territory_gain >= 4):
             bonus += 1
-        elif has_capture and state.synergyState.get("cutPending") and state.synergyState.get("cutPendingFor") == player:
-            bonus += 1
     elif card == "FRONTLINE_TACTICIAN" and _path_touches_enemy(state, path, player):
-        # Adjacent-to-enemy alone was firing almost every turn. Require pressure.
-        if has_capture or has_cut or territory_gain >= 2:
+        # Enemy adjacency alone was too common. Require actual pressure.
+        if has_capture or has_cut:
             bonus += 1
     elif card == "ENCIRCLER" and _capture_net_pressure(state, row, col, player):
         bonus += 2
     elif card == "BORDER_LORD" and _path_in_center_zone(path):
         bonus += 1
     elif card == "TRAP_SETTER":
-        # Trap pays only when a previous trap by the same player actually becomes capture.
+        # Trap pays only when a previous trap by the same player actually captures.
         if state.synergyState.get("trapPending") and state.synergyState.get("trapPendingFor") == player and has_capture:
             bonus += 2
     elif card == "COMEBACK_SPARK" and (opp_t - my_t) >= 6:
-        bonus += min(3, max(1, len([c for c in combos if not str(c).startswith('SYNERGY')])))
+        bonus += min(2, max(1, len([c for c in combos if not str(c).startswith('SYNERGY')])))
     elif card == "SHORT_TACTICIAN" and len(word) == 3:
-        # Tactical short words are valid, but not a universal short-word bonus.
         if has_capture:
             bonus += 1
         elif _path_touches_enemy(state, path, player) and territory_gain >= 2:
@@ -631,7 +642,11 @@ def synergy_activation_text(state: GameState, combos: list[str], player: str,
 
 def update_synergy_state(state: GameState, combos: list[str],
                          is_seed: bool = False) -> dict:
-    """Update terrain-synergy state machine after a move."""
+    """Update terrain-synergy state machine.
+
+    Ordinary combos such as COMEBACK and FORTIFY CHAIN are not synergy triggers.
+    Only SYNERGY: labels increment synergy counters.
+    """
     ss = dict(state.synergyState or {})
     card = state.selectedSynergy
     actor = state.currentPlayer
@@ -651,14 +666,15 @@ def update_synergy_state(state: GameState, combos: list[str],
             ss["cutPending"] = False
             ss.pop("cutPendingFor", None)
     elif card == "TRAP_SETTER":
-        if ss.get("trapPendingFor") == actor:
-            # The player's next tactical word either springs the trap or loses it.
+        # Existing trap is consumed by the player's next non-seed move.
+        if ss.get("trapPendingFor") == actor and not is_seed:
             if "CAPTURE" in combos:
                 ss["trapPending"] = False
                 ss.pop("trapPendingFor", None)
-            elif not is_seed:
+            else:
                 ss["trapPending"] = False
                 ss.pop("trapPendingFor", None)
+        # Set a trap only on non-capture positional pressure.
         if "CAPTURE" not in combos and ("CUT" in combos or "BRIDGE" in combos):
             ss["trapPending"] = True
             ss["trapPendingFor"] = actor
@@ -843,6 +859,52 @@ def _fast_bot_moves_for_letter(state: GameState, letter: str,
                 stack.append((path+[(nr,nc)], vis|{(nr,nc)}))
 
     return sorted(results, key=_candidate_move_quality, reverse=True)[:max_results]
+
+def _score_all_letters(state: GameState) -> dict:
+    """
+    Score candidate letters for the current board state.
+    Only checks Almost-guided letters + top-weighted commons (not all 26).
+    Fast: ~5-10ms per call.
+    """
+    import heapq as _hq
+    excluded = set(state.usedWords)
+    board_letters = board_letters_set(state)
+    VOWELS = set("AEIOU")
+
+    # Candidate set: Almost letters + top 12 by frequency, minus board letters
+    try:
+        almost_letters = {a["needs"] for a in find_almost_words(state, limit=8)}
+    except Exception:
+        almost_letters = set()
+
+    top_freq = sorted(
+        [l for l in _ALL_LETTERS if l not in board_letters],
+        key=lambda l: -_LETTER_WEIGHTS[l]
+    )[:12]
+
+    candidates = list((almost_letters | set(top_freq)) - board_letters)
+    # Always include common vowels if not on board
+    for v in "AEIOU":
+        if v not in board_letters and v not in candidates:
+            candidates.append(v)
+
+    scores = {}
+    for letter in candidates:
+        moves = _fast_bot_moves_for_letter(state, letter, max_results=6, excluded=excluded)
+        best_gain = max((m.get("territory_gain", 0) for m in moves), default=0)
+        best_word = max(moves, key=lambda m: m.get("territory_gain", 0),
+                        default={}).get("word", "") if moves else ""
+        power = any(len(m.get("word","")) >= 5 for m in moves)
+        scores[letter] = {
+            "words":     len(moves),
+            "gain":      best_gain,
+            "best_word": best_word,
+            "power":     power,
+            "is_vowel":  letter in VOWELS,
+        }
+    return scores
+
+
 
 def _comeback_letter_candidates(state: GameState, exclude: set | None = None, limit: int = 6) -> list[str]:
     """Return letters that can create an actual comeback chance.
@@ -2084,7 +2146,6 @@ def _bot_style_bonus(state: GameState, last: MoveHistoryItem, move: dict, player
     behind = get_score_gap(state, player)    # positive = player behind
 
     val = 0.0
-    # Universal word-length tuning: 3-letter words are glue, not default best play.
     if length >= 5:
         val += 5.0
     elif length == 4:
@@ -2093,25 +2154,24 @@ def _bot_style_bonus(state: GameState, last: MoveHistoryItem, move: dict, player
         val -= 5.0
 
     if style == "Raider":
-        val += (last.captureCount or 0) * 3.0
-        val += 2.0 if "DOUBLE CAPTURE" in labels else 0.0
-        # Raider should not snowball to 100% wins.
+        val += (last.captureCount or 0) * 2.5
+        val += 1.5 if "DOUBLE CAPTURE" in labels else 0.0
         if lead >= 6:
-            val -= (last.captureCount or 0) * 4.0
-            val -= max(0, (last.territoryGained or 0) - 3) * 1.5
+            val -= (last.captureCount or 0) * 4.5
+            val -= max(0, (last.territoryGained or 0) - 3) * 1.6
     elif style == "Defender":
-        # Defender must defend by reclaiming and connecting, not only by locking.
-        val += (last.fortifiedCellsGained or 0) * 1.6
-        val += 2.5 if "BRIDGE" in labels else 0.0
+        # Defender should not only lock; it must relieve pressure by reclaiming.
+        val += (last.fortifiedCellsGained or 0) * 1.2
+        val += 3.0 if "BRIDGE" in labels else 0.0
         if behind >= 4:
-            val += (last.captureCount or 0) * 5.0
-            val += max(0, (last.territoryGained or 0) - 2) * 1.2
+            val += (last.captureCount or 0) * 6.0
+            val += max(0, (last.territoryGained or 0) - 2) * 1.4
             if last.captureCount <= 0 and "BRIDGE" not in labels:
-                val -= (last.fortifiedCellsGained or 0) * 1.8
+                val -= (last.fortifiedCellsGained or 0) * 2.2
         if lead >= 8:
-            val -= (last.fortifiedCellsGained or 0) * 1.2
+            val -= (last.fortifiedCellsGained or 0) * 1.5
     elif style == "Builder":
-        val += (last.fortifiedCellsGained or 0) * 2.0
+        val += (last.fortifiedCellsGained or 0) * 1.8
         val += 2.0 if "BRIDGE" in labels else 0.0
     elif style == "Cutter":
         val += 4.0 if "CUT" in labels else 0.0
