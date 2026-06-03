@@ -237,7 +237,7 @@ _SUGGESTED_EXCLUDE = frozenset({
     # very technical / weak bot choices
     'ION','IONA','ERG','OHM','EMU','OVA','AXE',
     # UI/preview/bot filter: abbreviations, dictionary noise, obscure variants
-    'MPH','ETC','LIB','GLIB','BIFF','VAR','FARO','TARO','GEN','TOSH','LENO',
+    'MPH','ETC','LIB','GLIB','BIFF','ASAP','VAR','FARO','TARO','GEN','TOSH','LENO',
     'CPU','GPU','USB','PDF','PNG','JPG','GIF','API','CSS','HTML','HTTP','URL',
     'CEO','CFO','COO','LLC','LTD','INC','MBA','PHD','DNA','RNA','ATM','FAQ',
     'TBSP','TSP','OZ','LBS','KG','KM','CM','MM','MPG','BTW','FYI','DIY','VPN',
@@ -362,6 +362,14 @@ SYNERGY_CARDS = {
         "tip": "Build the threat one turn before the capture.",
         "flavor": "The best capture is already visible.",
     },
+    "SHORT_TACTICIAN": {
+        "name": "Short Tactician",
+        "icon": "🔤",
+        "difficulty": "Easy",
+        "effect": "Three-letter words gain Swing only when used on the frontline or to capture.",
+        "tip": "Use short words as tactical cuts, not as spam.",
+        "flavor": "Small words, sharp borders.",
+    },
     "COMEBACK_SPARK": {
         "name": "Comeback Spark",
         "icon": "🔥",
@@ -437,6 +445,57 @@ def _capture_net_pressure(state: GameState, row: int | None, col: int | None, pl
     return adj_enemy >= 2 or (adj_enemy >= 1 and adj_empty <= 1)
 
 
+
+# Synergy must feel like a build moment, not a permanent passive bonus.
+# Caps are per-player, while the no-consecutive rule is global per selected card.
+_SYNERGY_CAPS = {
+    "BRIDGE_MASTER": 3,
+    "FORTIFIER": 2,
+    "CUT_SPECIALIST": 2,
+    "CUT_HUNTER": 2,
+    "FRONTLINE_TACTICIAN": 3,
+    "ENCIRCLER": 3,
+    "BORDER_LORD": 4,
+    "TRAP_SETTER": 2,
+    "COMEBACK_SPARK": 3,
+    "SHORT_TACTICIAN": 3,
+    # legacy
+    "LONG_WORD": 3,
+    "VOWEL_ENGINE": 4,
+    "SEED_TACTICIAN": 2,
+    "PATH_SEEKER": 3,
+}
+
+def _synergy_count_key(card: str, player: str) -> str:
+    return f"synCount:{card}:{player}"
+
+def _synergy_can_activate(state: GameState, card: str, player: str) -> bool:
+    if not card:
+        return False
+    ss = state.synergyState or {}
+    cap = _SYNERGY_CAPS.get(card, 3)
+    try:
+        if int(ss.get(_synergy_count_key(card, player), 0)) >= cap:
+            return False
+    except Exception:
+        return False
+    # Prevent the same selected synergy from firing on every single move.
+    try:
+        if ss.get("lastSynergyCard") == card and int(ss.get("lastSynergyTurn", -999)) >= state.turn - 1:
+            return False
+    except Exception:
+        pass
+    return True
+
+def _record_synergy_activation(ss: dict, card: str, player: str, turn: int) -> dict:
+    ss = dict(ss or {})
+    key = _synergy_count_key(card, player)
+    ss[key] = int(ss.get(key, 0)) + 1
+    ss["lastSynergyCard"] = card
+    ss["lastSynergyPlayer"] = player
+    ss["lastSynergyTurn"] = turn
+    return ss
+
 def _synergy_preview_text(state: GameState, combos: list[str], player: str,
                           word: str, letter: str, path=None, row: int | None = None,
                           col: int | None = None) -> str:
@@ -448,21 +507,24 @@ def _synergy_preview_text(state: GameState, combos: list[str], player: str,
         return f"★ {name} ready"
     if card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
         return f"★ {name} ready"
-    if card in ("CUT_SPECIALIST", "CUT_HUNTER") and ("CUT" in combos or state.synergyState.get("cutPending")):
+    if card in ("CUT_SPECIALIST", "CUT_HUNTER") and ("CUT" in combos or (state.synergyState.get("cutPending") and state.synergyState.get("cutPendingFor") == player)):
         return f"★ {name} ready"
-    if card == "FRONTLINE_TACTICIAN" and _path_touches_enemy(state, path, player):
+    if card == "FRONTLINE_TACTICIAN" and _path_touches_enemy(state, path, player) and ("CAPTURE" in combos or "CUT" in combos or "BRIDGE" in combos):
         return f"★ {name} ready"
     if card == "ENCIRCLER" and _capture_net_pressure(state, row, col, player):
         return f"★ {name} ready"
     if card == "BORDER_LORD" and _path_in_center_zone(path):
         return f"★ {name} ready"
-    if card == "TRAP_SETTER" and (state.synergyState.get("trapPending") or _capture_net_pressure(state, row, col, player)):
+    if card == "TRAP_SETTER" and state.synergyState.get("trapPending") and state.synergyState.get("trapPendingFor") == player and "CAPTURE" in combos:
         return f"★ {name} ready"
     if card == "COMEBACK_SPARK":
         opp = other_player(player)
         my_t = count_territory(state, player)
         opp_t = count_territory(state, opp)
         if (opp_t - my_t) >= 6:
+            return f"★ {name} ready"
+    if card == "SHORT_TACTICIAN" and len(word) == 3:
+        if "CAPTURE" in combos or _path_touches_enemy(state, path, player):
             return f"★ {name} ready"
     # Legacy cards preserved for old saved games
     if card == "PATH_SEEKER" and "LONG PATH" in combos:
@@ -478,47 +540,67 @@ def _synergy_preview_text(state: GameState, combos: list[str], player: str,
 
 def apply_synergy_bonus(state: GameState, combos: list[str], player: str,
                         word: str, letter: str, path=None,
-                        row: int | None = None, col: int | None = None) -> int:
-    """Return extra territory from the active terrain-shaped synergy card."""
+                        row: int | None = None, col: int | None = None,
+                        territory_gain: int = 0) -> int:
+    """Return extra territory from the active terrain-shaped synergy card.
+
+    Tuned after Bot-vs-Bot tests:
+    - cap activations per player
+    - block consecutive same-card activation
+    - tighten Frontline / Trap / Cut so they are tactical moments, not passives
+    """
     card = state.selectedSynergy
-    if not card:
+    if not card or not _synergy_can_activate(state, card, player):
         return 0
+
     bonus = 0
     opp = other_player(player)
     my_t  = count_territory(state, player)
     opp_t = count_territory(state, opp)
+    has_capture = "CAPTURE" in combos or "DOUBLE CAPTURE" in combos
+    has_bridge = "BRIDGE" in combos
+    has_cut = "CUT" in combos
 
-    if card == "BRIDGE_MASTER" and "BRIDGE" in combos:
+    if card == "BRIDGE_MASTER" and has_bridge:
         bonus += 2
     elif card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
-        bonus += 6 if not state.synergyState.get("firstLockDone") else 1
+        bonus += 4 if not state.synergyState.get("firstLockDone") else 1
     elif card in ("CUT_SPECIALIST", "CUT_HUNTER"):
-        if "CUT" in combos:
-            bonus += 2
-        elif "CAPTURE" in combos and state.synergyState.get("cutPending"):
-            bonus += 2
+        # Cut is powerful; only reward meaningful split pressure.
+        if has_cut and (has_capture or has_bridge or territory_gain >= 4):
+            bonus += 1
+        elif has_capture and state.synergyState.get("cutPending") and state.synergyState.get("cutPendingFor") == player:
+            bonus += 1
     elif card == "FRONTLINE_TACTICIAN" and _path_touches_enemy(state, path, player):
-        bonus += 2
+        # Adjacent-to-enemy alone was firing almost every turn. Require pressure.
+        if has_capture or has_cut or territory_gain >= 2:
+            bonus += 1
     elif card == "ENCIRCLER" and _capture_net_pressure(state, row, col, player):
-        bonus += 3
+        bonus += 2
     elif card == "BORDER_LORD" and _path_in_center_zone(path):
         bonus += 1
-    elif card == "TRAP_SETTER" and state.synergyState.get("trapPending"):
-        bonus += 2
+    elif card == "TRAP_SETTER":
+        # Trap pays only when a previous trap by the same player actually becomes capture.
+        if state.synergyState.get("trapPending") and state.synergyState.get("trapPendingFor") == player and has_capture:
+            bonus += 2
     elif card == "COMEBACK_SPARK" and (opp_t - my_t) >= 6:
-        bonus += max(1, len([c for c in combos if not str(c).startswith('SYNERGY')]))
+        bonus += min(3, max(1, len([c for c in combos if not str(c).startswith('SYNERGY')])))
+    elif card == "SHORT_TACTICIAN" and len(word) == 3:
+        # Tactical short words are valid, but not a universal short-word bonus.
+        if has_capture:
+            bonus += 1
+        elif _path_touches_enemy(state, path, player) and territory_gain >= 2:
+            bonus += 1
     # legacy cards for saved games
     elif card == "LONG_WORD":
-        bonus += 3 if len(word) == 5 else 5 if len(word) >= 6 else 0
+        bonus += 2 if len(word) == 5 else 3 if len(word) >= 6 else 0
     elif card == "VOWEL_ENGINE" and letter.upper() in "AEIOU":
         bonus += 1
     elif card == "SEED_TACTICIAN" and state.synergyState.get("seedPending"):
-        bonus += 3
+        bonus += 2
     elif card == "PATH_SEEKER" and "LONG PATH" in combos:
         bonus += 2
     return bonus
-
-
 
 def synergy_activation_text(state: GameState, combos: list[str], player: str,
                             word: str, letter: str, bonus: int) -> str:
@@ -543,37 +625,49 @@ def synergy_activation_text(state: GameState, combos: list[str], player: str,
         return f"{name}: trap sprung +{bonus}T"
     if card == 'COMEBACK_SPARK':
         return f"{name}: comeback pressure +{bonus}T"
+    if card == 'SHORT_TACTICIAN':
+        return f"{name}: short frontline play +{bonus}T"
     return f"{name} activated! +{bonus}T"
 
 def update_synergy_state(state: GameState, combos: list[str],
                          is_seed: bool = False) -> dict:
     """Update terrain-synergy state machine after a move."""
-    ss = dict(state.synergyState)
+    ss = dict(state.synergyState or {})
     card = state.selectedSynergy
+    actor = state.currentPlayer
     if not card:
         return ss
+
+    if any(str(c).startswith("SYNERGY:") for c in combos):
+        ss = _record_synergy_activation(ss, card, actor, state.turn)
 
     if card == "FORTIFIER" and "FORTIFY CHAIN" in combos:
         ss["firstLockDone"] = True
     elif card in ("CUT_SPECIALIST", "CUT_HUNTER"):
         if "CUT" in combos:
             ss["cutPending"] = True
-        elif "CAPTURE" in combos and ss.get("cutPending"):
+            ss["cutPendingFor"] = actor
+        elif "CAPTURE" in combos and ss.get("cutPendingFor") == actor:
             ss["cutPending"] = False
+            ss.pop("cutPendingFor", None)
     elif card == "TRAP_SETTER":
-        # A cut/bridge/capture-looking move creates a tactical follow-up.
-        if "CUT" in combos or "BRIDGE" in combos or "CAPTURE" in combos:
+        if ss.get("trapPendingFor") == actor:
+            # The player's next tactical word either springs the trap or loses it.
+            if "CAPTURE" in combos:
+                ss["trapPending"] = False
+                ss.pop("trapPendingFor", None)
+            elif not is_seed:
+                ss["trapPending"] = False
+                ss.pop("trapPendingFor", None)
+        if "CAPTURE" not in combos and ("CUT" in combos or "BRIDGE" in combos):
             ss["trapPending"] = True
-        elif not is_seed:
-            ss["trapPending"] = False
+            ss["trapPendingFor"] = actor
     elif card == "SEED_TACTICIAN":
         if is_seed:
             ss["seedPending"] = True
         else:
             ss["seedPending"] = False
     return ss
-
-
 
 def _letter_enables_word(state: GameState, letter: str, max_check: int = 8) -> bool:
     """Quick check: does placing this letter anywhere create ≥1 valid word?"""
@@ -601,27 +695,117 @@ def _letter_enables_word(state: GameState, letter: str, max_check: int = 8) -> b
     return False
 
 
-def _letter_best_stats(state: GameState, letter: str) -> dict:
-    """Return {word_count, best_gain, best_word, roles} for one letter.
-    Lightweight — no simulate_move, uses path-length estimate for gain.
-    """
-    excluded = set(state.usedWords)
-    moves = _fast_bot_moves_for_letter(state, letter, max_results=8, excluded=excluded)
-    if not moves:
-        return {"wordCount": len(moves), "bestGain": 0, "bestWord": "", "roles": []}
-    best = max(moves, key=lambda m: m.get("territory_gain", 0))
-    # Quick role detection without simulate_move
-    roles = []
-    for m in moves[:3]:
-        w = m.get("word", "")
-        if len(w) >= 5 and "LONG PATH" not in roles:
-            roles.append("LONG PATH")
-    return {
-        "wordCount": len(moves),
-        "bestGain":  best.get("territory_gain", 0),
-        "bestWord":  best.get("word", ""),
-        "roles":     roles[:2],
+
+_ROLE_PRIORITY = {
+    "WILD": 90,
+    "CAPTURE": 80,
+    "BRIDGE": 75,
+    "LOCK": 70,
+    "POWER": 60,
+    "LONG": 50,
+    "SAFE": 40,
+    "SETUP": 10,
+}
+
+def _market_role_payload(role: str) -> dict:
+    meta = {
+        "WILD":    ("★", "Wild"),
+        "CAPTURE": ("⚔️", "Capture"),
+        "BRIDGE":  ("🌉", "Bridge"),
+        "LOCK":    ("🔒", "Lock"),
+        "POWER":   ("⚡", "Power"),
+        "LONG":    ("➜", "Long"),
+        "SAFE":    ("🛡", "Safe"),
+        "SETUP":   ("✨", "Setup"),
     }
+    icon, label = meta.get(role, meta["SETUP"])
+    return {"bestRole": role, "roleIcon": icon, "roleLabel": label}
+
+def _pick_best_role(roles: list[str], word_count: int, best_gain: int, best_word: str) -> str:
+    normalized = []
+    for r in roles or []:
+        rr = str(r).upper()
+        if "CAPTURE" in rr:
+            normalized.append("CAPTURE")
+        elif "BRIDGE" in rr:
+            normalized.append("BRIDGE")
+        elif "FORTIFY" in rr or "LOCK" in rr:
+            normalized.append("LOCK")
+        elif "LONG" in rr:
+            normalized.append("LONG")
+    if best_gain >= 5:
+        normalized.append("POWER")
+    if word_count >= 4:
+        normalized.append("SAFE")
+    if not normalized:
+        normalized.append("SETUP")
+    return max(normalized, key=lambda r: _ROLE_PRIORITY.get(r, 0))
+
+
+def _letter_best_stats(state: GameState, letter: str) -> dict:
+    """Return market stats plus a bestRole for one letter.
+
+    For active market letters only, so simulating a few moves is acceptable.
+    """
+    if letter == "*":
+        payload = {"wordCount": 0, "bestGain": 0, "bestWord": "", "roles": ["WILD"], "isWild": True}
+        payload.update(_market_role_payload("WILD"))
+        return payload
+
+    excluded = set(state.usedWords)
+    moves = _fast_bot_moves_for_letter(state, letter, max_results=10, excluded=excluded)
+    if not moves:
+        payload = {"wordCount": 0, "bestGain": 0, "bestWord": "", "roles": ["SETUP"]}
+        payload.update(_market_role_payload("SETUP"))
+        return payload
+
+    best_word = ""
+    best_gain = 0
+    roles = []
+    for m in moves:
+        try:
+            after = validate_and_apply_move(
+                clone_state(state), m["row"], m["col"], m["letter"], m["path"],
+                advance_market_flag=False
+            )
+            last = after.moveHistory[-1]
+            best_gain = max(best_gain, last.territoryGained or 0)
+            if (last.territoryGained or 0) >= best_gain:
+                best_word = last.word
+            for c in (last.comboLabels or []):
+                cc = str(c)
+                if cc.startswith("SYNERGY"):
+                    continue
+                if cc not in roles:
+                    roles.append(cc)
+            if (last.captureCount or 0) > 0 and "CAPTURE" not in roles:
+                roles.append("CAPTURE")
+            if (last.fortifiedCellsGained or 0) > 0 and "LOCK" not in roles:
+                roles.append("LOCK")
+        except Exception:
+            gain = m.get("territory_gain", 0)
+            if gain >= best_gain:
+                best_gain = gain
+                best_word = m.get("word", best_word)
+
+    if not roles:
+        if len(best_word) >= 5:
+            roles.append("LONG PATH")
+        elif len(moves) >= 4:
+            roles.append("SAFE")
+        else:
+            roles.append("SETUP")
+
+    best_role = _pick_best_role(roles, len(moves), best_gain, best_word)
+    payload = {
+        "wordCount": len(moves),
+        "bestGain": best_gain,
+        "bestWord": best_word,
+        "roles": roles[:3],
+        "isWild": False,
+    }
+    payload.update(_market_role_payload(best_role))
+    return payload
 
 
 def _fast_bot_moves_for_letter(state: GameState, letter: str,
@@ -630,11 +814,11 @@ def _fast_bot_moves_for_letter(state: GameState, letter: str,
     """Like _fast_bot_moves but constrained to a specific letter."""
     excluded = excluded or set()
     words = get_words()
-    player = state.currentPlayer
     placeable = get_placeable_empty_cells(state)
     results = []
+    collect_cap = max_results * 8
 
-    for (er, ec) in placeable[:6]:
+    for (er, ec) in placeable[:8]:
         stack = [([p], frozenset([p])) for p in [(er,ec)] +
                  [(r,c) for r,c in get_neighbors(er,ec) if state.board[r][c].letter]]
         while stack:
@@ -642,68 +826,23 @@ def _fast_bot_moves_for_letter(state: GameState, letter: str,
             if len(path) >= 3 and (er,ec) in set(path):
                 w = letters_from_path(state, path, (er,ec), letter)
                 if w and w in words and w not in excluded and _is_ui_word(w):
-                    # Quick territory estimate: path length
                     gain = len(path)
                     results.append({"row": er, "col": ec, "letter": letter,
                                     "path": [Coord(row=r, col=c) for r,c in path],
                                     "word": w, "territory_gain": gain})
-                    excluded.add(w)
-                    if len(results) >= max_results:
-                        return results
-            if len(path) >= 5: continue
+                    if len(results) >= collect_cap:
+                        return sorted(results, key=_candidate_move_quality, reverse=True)[:max_results]
+            if len(path) >= 5:
+                continue
             r, c = path[-1]
-            for nr, nc in get_neighbors(r, c):
-                if (nr,nc) in vis: continue
-                if (nr,nc) != (er,ec) and not state.board[nr][nc].letter: continue
+            for nr, nc in get_neighbors(r,c):
+                if (nr,nc) in vis:
+                    continue
+                if (nr,nc)!=(er,ec) and not state.board[nr][nc].letter:
+                    continue
                 stack.append((path+[(nr,nc)], vis|{(nr,nc)}))
-    return results
 
-
-def _score_all_letters(state: GameState) -> dict:
-    """
-    Score candidate letters for the current board state.
-    Only checks Almost-guided letters + top-weighted commons (not all 26).
-    Fast: ~5-10ms per call.
-    """
-    import heapq as _hq
-    excluded = set(state.usedWords)
-    board_letters = board_letters_set(state)
-    VOWELS = set("AEIOU")
-
-    # Candidate set: Almost letters + top 12 by frequency, minus board letters
-    try:
-        almost_letters = {a["needs"] for a in find_almost_words(state, limit=8)}
-    except Exception:
-        almost_letters = set()
-
-    top_freq = sorted(
-        [l for l in _ALL_LETTERS if l not in board_letters],
-        key=lambda l: -_LETTER_WEIGHTS[l]
-    )[:12]
-
-    candidates = list((almost_letters | set(top_freq)) - board_letters)
-    # Always include common vowels if not on board
-    for v in "AEIOU":
-        if v not in board_letters and v not in candidates:
-            candidates.append(v)
-
-    scores = {}
-    for letter in candidates:
-        moves = _fast_bot_moves_for_letter(state, letter, max_results=6, excluded=excluded)
-        best_gain = max((m.get("territory_gain", 0) for m in moves), default=0)
-        best_word = max(moves, key=lambda m: m.get("territory_gain", 0),
-                        default={}).get("word", "") if moves else ""
-        power = any(len(m.get("word","")) >= 5 for m in moves)
-        scores[letter] = {
-            "words":     len(moves),
-            "gain":      best_gain,
-            "best_word": best_word,
-            "power":     power,
-            "is_vowel":  letter in VOWELS,
-        }
-    return scores
-
-
+    return sorted(results, key=_candidate_move_quality, reverse=True)[:max_results]
 
 def _comeback_letter_candidates(state: GameState, exclude: set | None = None, limit: int = 6) -> list[str]:
     """Return letters that can create an actual comeback chance.
@@ -764,6 +903,26 @@ def _comeback_letter_candidates(state: GameState, exclude: set | None = None, li
 
     scored.sort(reverse=True)
     return [l for _, l in scored[:limit]]
+
+
+
+def _apply_comeback_wild(state: GameState, active: list[str]) -> list[str]:
+    """Convert rare letters to a WILD tile only while the current player is behind."""
+    try:
+        if state.freeLetterUsed:
+            return active
+        gap = get_score_gap(state, state.currentPlayer)
+        if gap < 6:
+            return active
+        rare = {"Q", "X", "Z", "J"}
+        out = list(active)
+        for i, l in enumerate(out):
+            if l in rare:
+                out[i] = "*"
+                return out
+        return out
+    except Exception:
+        return active
 
 
 def generate_letter_market(state: GameState) -> tuple[list[str], list[str]]:
@@ -917,6 +1076,7 @@ def generate_letter_market(state: GameState) -> tuple[list[str], list[str]]:
         if vowels_avail:
             preview[-1] = _r.choice(vowels_avail)
 
+    active = _apply_comeback_wild(state, active)
     return active[:3], preview[:3]
 
 
@@ -975,6 +1135,7 @@ def advance_market(state: GameState, used_letter: str) -> tuple[list[str], list[
         l = _r.choices(pool, weights=[_LETTER_WEIGHTS[l] for l in pool])[0]
         preview.append(l); existing.add(l)
 
+    active = _apply_comeback_wild(state, active)
     return active[:3], preview[:3]
 
 
@@ -1440,6 +1601,13 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     apply_locks(temp)
     recalc_scores(temp, current_player_for_word_score=player, last_word=word)
 
+    wild_cost_active = state.synergyState.get("_wildCostPending") == player
+    if wild_cost_active:
+        if player == "RED":
+            temp.scores.redWord = max(0, temp.scores.redWord - 1)
+        else:
+            temp.scores.blueWord = max(0, temp.scores.blueWord - 1)
+
     delta = diff_cells(before, temp, player)
 
     # Detect cross words formed by this placement
@@ -1470,7 +1638,7 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
 
     # Synergy Card bonus (Balatro-like build direction)
     base_bonus = bonus
-    synergy_bonus = apply_synergy_bonus(temp, combos, player, word, letter, path=path, row=row, col=col)
+    synergy_bonus = apply_synergy_bonus(temp, combos, player, word, letter, path=path, row=row, col=col, territory_gain=delta["territory_gain"])
     bonus_uncapped = base_bonus + synergy_bonus
 
     # ── Anti-snowball: cap bonus when player is already winning by 10+ cells ──
@@ -1491,6 +1659,8 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
         syn_text = synergy_activation_text(temp, combos, player, word, letter, actual_synergy_bonus)
         if syn_text:
             combos.append(f"SYNERGY:{syn_text}")
+    if wild_cost_active:
+        combos.append("WILD COST")
     if bonus > 0:
         # Convert nearest unfortified non-player cells to player (bonus territory)
         import random as _r
@@ -1535,6 +1705,8 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
     temp.lastFortifiedCells = delta["newly_locked"]
     temp.lastComboLabels = combos
     temp.synergyState = update_synergy_state(temp, combos, is_seed=False)
+    if wild_cost_active:
+        temp.synergyState.pop("_wildCostPending", None)
     temp.currentPlayer = other_player(player)
     temp.turn += 1
     temp.consecutivePasses = 0
@@ -1805,6 +1977,23 @@ def simulate_move(state: GameState, move):
     return validate_and_apply_move(clone_state(state), move["row"], move["col"], move["letter"], move["path"])
 
 
+def _candidate_move_quality(move: dict) -> float:
+    """Prefer 4-6 letter natural words; keep 3-letter words as tactical glue."""
+    w = (move.get("word") or "").upper()
+    length = len(w)
+    gain = move.get("territory_gain", 0) or 0
+    q = gain
+    if length >= 5:
+        q += 6
+    elif length == 4:
+        q += 3
+    elif length == 3:
+        q -= 3
+    if not _is_ui_word(w):
+        q -= 100
+    return q
+
+
 def evaluate_state_for_player(state: GameState, player: str) -> float:
     opponent = other_player(player)
     return (
@@ -1816,12 +2005,12 @@ def evaluate_state_for_player(state: GameState, player: str) -> float:
 
 def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: set) -> list[dict]:
     """
-    Ultra-fast bot move finder for Render free tier.
+    Fast bot move finder.
 
-    Hard limits to guarantee sub-1s response:
-    - Max 4 placeable cells checked (random sample)
-    - Max path length 4 (even for strong bot)
-    - Stop immediately when max_results found
+    Updated balance:
+    - collect a wider candidate pool before returning
+    - sort toward 4-6 letter natural words
+    - keep 3-letter words, but do not let them dominate Bot play
     """
     import string, random
     words = get_words()
@@ -1829,20 +2018,18 @@ def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: 
     LETTERS = string.ascii_uppercase
 
     placeable = get_placeable_empty_cells(state)
-    # Hard cap: check at most 4 cells, chosen randomly for variety
-    if len(placeable) > 4:
-        placeable = random.sample(placeable, 4)
+    if len(placeable) > 6:
+        placeable = random.sample(placeable, 6)
 
-    # Hard cap path length to 4 regardless of what caller requests
-    effective_len = min(max_len, 4)
+    effective_len = min(max_len, 5)
+    collect_cap = max_results * 8
 
     for (er, ec) in placeable:
         starts = [(er, ec)]
         for nr, nc in get_neighbors(er, ec):
             if state.board[nr][nc].letter:
                 starts.append((nr, nc))
-        # Max 3 starts per cell
-        starts = starts[:3]
+        starts = starts[:4]
 
         for start in starts:
             stack = [([start], frozenset([start]))]
@@ -1859,9 +2046,10 @@ def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: 
                                 "letter": placed_letter,
                                 "path": [Coord(row=r, col=c) for r, c in path],
                                 "word": word,
+                                "territory_gain": plen,
                             })
-                            if len(results) >= max_results:
-                                return results
+                            if len(results) >= collect_cap:
+                                return sorted(results, key=_candidate_move_quality, reverse=True)[:max_results]
 
                 if plen >= effective_len:
                     continue
@@ -1874,8 +2062,7 @@ def _fast_bot_moves(state: GameState, max_len: int, max_results: int, excluded: 
                         continue
                     stack.append((path + [(nr, nc)], visited | {(nr, nc)}))
 
-    return results
-
+    return sorted(results, key=_candidate_move_quality, reverse=True)[:max_results]
 
 def generate_normal_moves(state: GameState) -> list[dict]:
     used = set(state.usedWords)
@@ -1885,6 +2072,54 @@ def generate_normal_moves(state: GameState) -> list[dict]:
 def generate_strong_moves(state: GameState) -> list[dict]:
     used = set(state.usedWords)
     return _fast_bot_moves(state, max_len=4, max_results=8, excluded=used)
+
+
+def _bot_style_bonus(state: GameState, last: MoveHistoryItem, move: dict, player: str) -> float:
+    """Make visible Bot Style meaningful without making one style dominant."""
+    style = getattr(state, "botStyle", "") or ""
+    labels = last.comboLabels or []
+    word = (move.get("word") or last.word or "").upper()
+    length = len(word)
+    lead = -get_score_gap(state, player)     # positive = player ahead
+    behind = get_score_gap(state, player)    # positive = player behind
+
+    val = 0.0
+    # Universal word-length tuning: 3-letter words are glue, not default best play.
+    if length >= 5:
+        val += 5.0
+    elif length == 4:
+        val += 2.5
+    elif length == 3 and last.captureCount <= 0 and "BRIDGE" not in labels and "CUT" not in labels:
+        val -= 5.0
+
+    if style == "Raider":
+        val += (last.captureCount or 0) * 3.0
+        val += 2.0 if "DOUBLE CAPTURE" in labels else 0.0
+        # Raider should not snowball to 100% wins.
+        if lead >= 6:
+            val -= (last.captureCount or 0) * 4.0
+            val -= max(0, (last.territoryGained or 0) - 3) * 1.5
+    elif style == "Defender":
+        # Defender must defend by reclaiming and connecting, not only by locking.
+        val += (last.fortifiedCellsGained or 0) * 1.6
+        val += 2.5 if "BRIDGE" in labels else 0.0
+        if behind >= 4:
+            val += (last.captureCount or 0) * 5.0
+            val += max(0, (last.territoryGained or 0) - 2) * 1.2
+            if last.captureCount <= 0 and "BRIDGE" not in labels:
+                val -= (last.fortifiedCellsGained or 0) * 1.8
+        if lead >= 8:
+            val -= (last.fortifiedCellsGained or 0) * 1.2
+    elif style == "Builder":
+        val += (last.fortifiedCellsGained or 0) * 2.0
+        val += 2.0 if "BRIDGE" in labels else 0.0
+    elif style == "Cutter":
+        val += 4.0 if "CUT" in labels else 0.0
+        val += 1.5 if "BRIDGE" in labels else 0.0
+    elif style == "Expander":
+        val += max(0, (last.territoryGained or 0) - 2) * 1.3
+        val += 2.0 if "LONG PATH" in labels else 0.0
+    return val
 
 
 def choose_bot_move(state: GameState):
@@ -1906,14 +2141,14 @@ def choose_bot_move(state: GameState):
                             for l in labels)
                 # Rubberband: when Normal bot is already ahead, stop piling on
                 # captures/bridges. It should still play, but not crush beginners.
+                style_bonus = _bot_style_bonus(state, last, m, player)
                 if lead >= 8:
                     bonus -= (last.captureCount or 0) * 8
                     bonus -= 7 if "BRIDGE" in labels else 0
                     bonus -= 4 if "DOUBLE CAPTURE" in labels else 0
                     bonus -= max(0, (last.territoryGained or 0) - 2) * 2
-                    # prefer readable small words over spectacular swings
-                    return word_score(m["word"]) - bonus
-                return base + bonus
+                    return word_score(m["word"]) + style_bonus - bonus
+                return base + bonus + style_bonus
             except Exception:
                 return word_score(m["word"])
         if lead >= 8:
@@ -1945,7 +2180,7 @@ def choose_bot_move(state: GameState):
             elif label in ("LONG PATH", "CAPTURE"):  combo_value += 3
             elif label in ("EDGE REACH", "FIRST CAPTURE"): combo_value += 2
             else:                                     combo_value += 1
-        value = my_value + word_score(move["word"]) * 1.4 + combo_value
+        value = my_value + word_score(move["word"]) * 1.4 + combo_value + _bot_style_bonus(state, last, move, player)
         if value > best_value:
             best_value = value
             best_move = move
