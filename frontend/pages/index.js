@@ -3,8 +3,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   botMove, autoMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard,
-  getAlmost, getLetterPreview, getMarket, getSuggestions, getSynergyOptions, selectSynergy, getThreat, createAsyncMatch, getAsyncMatch, submitAsyncMove, seedAsyncMove, passAsyncTurn,
-  joinWaitlist, passTurn, previewMove, seedMove, submitDailyScore, submitMove,
+  getAlmost, getLetterPreview, getMarket, getSuggestions, getSynergyOptions, selectSynergy, getThreat, createAsyncMatch, getAsyncMatch, submitAsyncMove, seedAsyncMove, rotateAsyncBlock, passAsyncTurn,
+  joinWaitlist, passTurn, previewMove, rotateBlock, seedMove, submitDailyScore, submitMove,
   useFreeLetter,
 } from "../lib/api";
 
@@ -50,6 +50,7 @@ const TERRAIN_LABELS = {
   "SWING MOVE": "Territory Swing",
   "BEACHHEAD": "Beachhead",
   "FRONTLINE PUSH": "Frontline Push",
+  "ROTATION RAID": "Rotation Raid",
 };
 
 function terrainComboLabel(label, move = null) {
@@ -63,6 +64,7 @@ function terrainComboLabel(label, move = null) {
   if (raw === "LONG PATH") return "Long Path bonus";
   if (raw === "BEACHHEAD") return "Beachhead — enemy territory breach";
   if (raw === "FRONTLINE PUSH") return "Frontline Push — border advanced";
+  if (raw === "ROTATION RAID") return "Rotation Raid — letters rotated";
   return TERRAIN_LABELS[raw] || raw;
 }
 
@@ -206,13 +208,13 @@ function updateStreak(dateStr) {
 }
 
 // ── Cell ──────────────────────────────────────────────────────────────────────
-function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, bridgePath, lockNeighbor, tutorialPlace, tutorialPath, disabled, gen, attack, inPath, threat, threatMove, captureOrder, lockOrder, onClick }) {
+function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, bridgePath, lockNeighbor, tutorialPlace, tutorialPath, disabled, gen, attack, inPath, threat, threatMove, rotateTarget, captureOrder, lockOrder, onClick }) {
   const cls = ["cell",
     cell.owner === "RED" ? "cr" : cell.owner === "BLUE" ? "cb" : "",
     cell.fortified ? "ft" : "", sel ? "sl" : "", placed ? "pl" : "",
     legal ? "lg" : "", disabled && !sel ? "dm" : "",
     attack ? "atk" : "",   // opponent cell that can be attacked
-    threat ? "threat" : "", threatMove ? "threatMove" : "",
+    threat ? "threat" : "", threatMove ? "threatMove" : "", rotateTarget ? "rotate-target" : "",
     bridgePath ? "bridge-path" : "", lockNeighbor ? "lock-neighbor" : "",
     tutorialPlace ? "tut-pulse tut-cell" : "", tutorialPath ? "tut-arrow-cell" : "",
     inPath ? "inpath" : "", // opponent cell currently in selected path (will be captured)
@@ -579,6 +581,8 @@ export default function Home() {
   const [boardMode, setBoardMode] = useState("standard"); // WT_QUICK5_UI_V2
 const [thinking, setThinking] = useState(false);
   const [preview, setPreview]   = useState(null);
+  const [rotateMode, setRotateMode] = useState(false);
+  const [rotateTarget, setRotateTarget] = useState(null);
   const [showSummary, setSum]   = useState(false);
   const [copied, setCopied]     = useState(false);
 
@@ -1160,8 +1164,32 @@ const [thinking, setThinking] = useState(false);
     return true;
   };
 
+
+  async function performRotateRaid(target = rotateTarget) {
+    if (!target) { setError("Choose the top-left cell of a 2x2 block. Locked cells cannot rotate."); return; }
+    try {
+      const payload = { row: target.row, col: target.col };
+      const next = asyncMode ? await rotateAsyncBlock(gameId, asyncToken, payload) : await rotateBlock(gameId, payload);
+      setState(next);
+      setRotateMode(false);
+      setRotateTarget(null);
+      setPath([]); setPlaced(null); setPreview(null); setValuePrev([]);
+      setCombo(["Rotation Raid", "Build a word to breach enemy territory"]);
+      try { navigator.vibrate && navigator.vibrate([20, 25, 35]); } catch {}
+      await refresh(gameId);
+    } catch(e) { setError(e.message || "Rotation Raid failed"); }
+  }
+
+  function handleRotateCell(r, c) {
+    const size = state?.boardSize || state?.board?.length || 7;
+    if (r + 1 >= size || c + 1 >= size) { setError("Choose the top-left cell of a 2x2 block."); return; }
+    setRotateTarget({ row:r, col:c });
+    setError("Press Confirm Rotation to rotate letters only. Ownership will not move.");
+  }
+
   function clickCell(r,c) {
     if (!state || !human()) return;
+    if (rotateMode) { handleRotateCell(r,c); return; }
     playSfx("click");
     const cell = state.board[r][c];
 
@@ -1304,6 +1332,12 @@ const [thinking, setThinking] = useState(false);
     return s;
   }, [JSON.stringify(threats||[])]);
   const threatMoveSet = useMemo(() => new Set((threats||[]).map(t => asKey(t.row,t.col))), [JSON.stringify(threats||[])]);
+  const rotateTargetSet = useMemo(() => {
+    if (!rotateTarget) return new Set();
+    const r = rotateTarget.row, c = rotateTarget.col;
+    return new Set([asKey(r,c), asKey(r,c+1), asKey(r+1,c), asKey(r+1,c+1)]);
+  }, [rotateTarget?.row, rotateTarget?.col]);
+  const rotateRaidUsed = !!state?.synergyState?.rotationRaidUsed;
   const lastMove = (state?.moveHistory || [])[Math.max((state?.moveHistory?.length || 0) - 1, 0)] || null;
   const lastMoveInsights = moveInsightLines(lastMove);
   const lastMoveIsSwing = !!lastMove && (
@@ -1583,7 +1617,7 @@ const [thinking, setThinking] = useState(false);
                     captureOrder={capturedOrderMap.get(k)} lockOrder={lockedOrderMap.get(k)}
                     disabled={isDim(cell.row,cell.col)} gen={animGen}
                     attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
-                    threat={threatCellSet.has(k)} threatMove={threatMoveSet.has(k)}
+                    threat={threatCellSet.has(k)} threatMove={threatMoveSet.has(k)} rotateTarget={rotateTargetSet.has(k)}
                     inPath={inPathOpponentSet.has(k)}
                     onClick={()=>clickCell(cell.row,cell.col)}/>
                   {showVp && <div className={`vp-overlay vp-${vp.tier || 'basic'}`} title={vp.word ? `${vp.word} · Territory Swing +${vp.gain||0}${vp.synergyPreview ? ' · '+vp.synergyPreview : ''}` : 'Setup'}>
@@ -1783,6 +1817,8 @@ const [thinking, setThinking] = useState(false);
             </button>}
               <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
               {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
+              {!isTutorial && !rotateRaidUsed && <button className={`ba brotate ${rotateMode ? "active" : ""}`} onClick={()=>{ if(rotateTarget) performRotateRaid(); else { setRotateMode(v=>!v); setRotateTarget(null); setPath([]); setPlaced(null); setPreview(null); setError("Choose the top-left of a 2x2 block. Rotation alone captures nothing."); } }} disabled={!human()} title="Once per game. Rotate letters only in a 2x2 block touching enemy territory. Ownership does not move.">{rotateTarget ? "Confirm Rotation" : rotateMode ? "Pick 2x2" : "Rotation Raid"}</button>}
+              {rotateMode && <button className="ba" onClick={()=>{setRotateMode(false);setRotateTarget(null);setError("");}} disabled={!human()}>Cancel</button>}
             </div>
           </div>}
         </div>
@@ -2090,6 +2126,9 @@ const [thinking, setThinking] = useState(false);
       .cell[data-cap]{animation:acap 1050ms cubic-bezier(.2,.8,.2,1) forwards;animation-delay:calc(var(--cap-order,0) * 90ms);animation-fill-mode:both}
       .cell[data-lk]{animation:alk 850ms ease forwards;animation-delay:var(--lock-delay,0ms);animation-fill-mode:both}
       .lock-shield{position:absolute;right:3px;bottom:2px;font-size:9px;line-height:1;background:rgba(255,255,255,.90);border:1.5px solid rgba(17,24,39,.72);border-radius:999px;padding:2px 3px;box-shadow:0 1px 4px rgba(0,0,0,.18);pointer-events:none;letter-spacing:0}
+      .cell.rotate-target{outline:3px solid #8b5cf6!important;outline-offset:-3px;box-shadow:0 0 0 4px rgba(139,92,246,.18),0 0 18px rgba(139,92,246,.35)!important;animation:rotatePulse .75s ease-in-out infinite alternate}
+      .brotate.active{background:#ede9fe;border-color:#8b5cf6;color:#4c1d95}
+      @keyframes rotatePulse{from{transform:rotate(-1deg) scale(1)}to{transform:rotate(1deg) scale(1.035)}}
       .cell.threat{box-shadow:inset 0 0 0 2px rgba(37,99,235,.48),0 0 0 3px rgba(37,99,235,.08);background:rgba(37,99,235,.08)}
       .cell.threatMove{outline:2px dashed rgba(37,99,235,.42);outline-offset:-5px}
       .threat-dot{position:absolute;bottom:4px;left:4px;width:7px;height:7px;border-radius:50%;background:#2563eb;box-shadow:0 0 8px rgba(37,99,235,.75);pointer-events:none}

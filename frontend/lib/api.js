@@ -51,6 +51,17 @@ export async function seedMove(gameId, payload) {
   return readJson(res);
 }
 
+
+
+export async function rotateBlock(gameId, payload) {
+  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/rotate-block`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return readJson(res);
+}
+
 export async function previewMove(gameId, payload) {
   const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/preview-move`, {
     method: "POST",
@@ -149,6 +160,17 @@ export async function getAsyncMatch(gameId, token) {
 
 export async function submitAsyncMove(gameId, token, payload) {
   const res = await fetchWithTimeout(`${API_BASE}/async/games/${gameId}/move?token=${encodeURIComponent(token)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return readJson(res);
+}
+
+
+
+export async function rotateAsyncBlock(gameId, token, payload) {
+  const res = await fetchWithTimeout(`${API_BASE}/async/games/${gameId}/rotate-block?token=${encodeURIComponent(token)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

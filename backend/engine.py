@@ -2469,3 +2469,79 @@ for _wt_name in [
         _wt_wrapped._wt_quick_wrapped = True
         globals()[_wt_name] = _wt_wrapped
 
+
+
+# PHASE4_ROTATION_RAID_V1
+def rotate_block_state(state: GameState, row: int, col: int, player=None) -> GameState:
+    """Rotate only the letters in a 2x2 block. Ownership never moves.
+
+    Constraints:
+    - once per game
+    - 2x2 only
+    - locked cells cannot be rotated
+    - rotation alone captures nothing and does not advance the turn
+    """
+    if state.winner:
+        return state
+    player = player or state.currentPlayer
+    opponent = "BLUE" if player == "RED" else "RED"
+    try:
+        size = int(getattr(state, "boardSize", BOARD_SIZE) or BOARD_SIZE)
+    except Exception:
+        size = BOARD_SIZE
+    if row < 0 or col < 0 or row + 1 >= size or col + 1 >= size:
+        raise ValueError("Rotation Raid must target the top-left of a 2x2 block.")
+
+    coords = [(row, col), (row, col + 1), (row + 1, col + 1), (row + 1, col)]
+    cells = [state.board[r][c] for r, c in coords]
+
+    ss = dict(state.synergyState or {})
+    if ss.get("rotationRaidUsed"):
+        raise ValueError("Rotation Raid already used this game.")
+    if any(getattr(cell, "fortified", False) for cell in cells):
+        raise ValueError("Locked cells cannot be rotated.")
+    if any(not getattr(cell, "letter", None) for cell in cells):
+        raise ValueError("Rotation Raid needs a complete 2x2 letter block.")
+    if not any(getattr(cell, "owner", None) == opponent for cell in cells):
+        raise ValueError("Rotation Raid must touch enemy territory.")
+
+    before_letters = [cell.letter for cell in cells]
+    after_letters = [before_letters[-1]] + before_letters[:-1]  # clockwise letter rotation
+    for cell, letter in zip(cells, after_letters):
+        cell.letter = letter
+
+    ss["rotationRaidUsed"] = True
+    ss["rotationRaidPlayer"] = player
+    ss["rotationRaidTurn"] = int(state.turn)
+    ss["rotationRaidCells"] = [{"row": r, "col": c} for r, c in coords]
+    state.synergyState = ss
+    state.lastChangedCells = [Coord(row=r, col=c) for r, c in coords]
+    state.lastCapturedCells = []
+    state.lastFortifiedCells = []
+    state.lastComboLabels = ["ROTATION RAID"]
+
+    recalc_scores(state)
+    try:
+        red_total = (state.scores.redTerritory or 0) * 1.5 + (state.scores.redWord or 0)
+        blue_total = (state.scores.blueTerritory or 0) * 1.5 + (state.scores.blueWord or 0)
+        state.moveHistory.append(MoveHistoryItem(
+            turn=state.turn,
+            player=player,
+            word="回転侵略" if _LANG == "ja" else "ROTATION RAID",
+            moveType="ROTATE",
+            placedRow=row,
+            placedCol=col,
+            placedLetter="",
+            path=[Coord(row=r, col=c) for r, c in coords],
+            wordScoreGained=0,
+            territoryGained=0,
+            fortifiedCellsGained=0,
+            captureCount=0,
+            comboLabels=["ROTATION RAID"],
+            redTotalAfter=red_total,
+            blueTotalAfter=blue_total,
+        ))
+    except Exception:
+        pass
+    return state
+

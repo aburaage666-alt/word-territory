@@ -82,6 +82,7 @@ from engine import (
     get_letter_preview_moves,
     get_threat_preview,
     pass_turn,
+    rotate_block_state,
     preview_move,
     validate_and_apply_move,
 )
@@ -244,6 +245,25 @@ def seed_move(game_id: str, payload: SeedMoveRequest):
         raise HTTPException(status_code=404, detail="Game not found")
     try:
         next_state = apply_seed_move(state, payload.row, payload.col, payload.letter, advance_market_flag=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    GAMES[game_id] = next_state
+    return next_state
+
+
+
+
+@app.post("/games/{game_id}/rotate-block", response_model=GameState)
+def rotate_block(game_id: str, payload: dict):
+    state = GAMES.get(game_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if state.winner:
+        return state
+    if state.currentPlayer == state.botPlayer:
+        raise HTTPException(status_code=400, detail="It is not your turn")
+    try:
+        next_state = rotate_block_state(state, int(payload.get("row", -1)), int(payload.get("col", -1)), state.currentPlayer)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     GAMES[game_id] = next_state
@@ -652,6 +672,23 @@ def async_move(game_id: str, token: str, payload: MoveRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     _save_async_state(game_id, next_state, {"type": "WORD", "turn": state.turn, "player": player})
+    return next_state
+
+
+
+
+@app.post("/async/games/{game_id}/rotate-block")
+def async_rotate_block(game_id: str, token: str, payload: dict):
+    dbrow, state, player = _load_async_game(game_id, token)
+    if state.winner:
+        return state
+    if state.currentPlayer != player:
+        raise HTTPException(status_code=400, detail="It is not your turn")
+    try:
+        next_state = rotate_block_state(state, int(payload.get("row", -1)), int(payload.get("col", -1)), player)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _save_async_state(game_id, next_state, {"type": "ROTATE", "turn": state.turn, "player": player})
     return next_state
 
 
