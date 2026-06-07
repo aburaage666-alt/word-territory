@@ -48,6 +48,8 @@ const TERRAIN_LABELS = {
   "EDGE REACH": "Edge Reach",
   "COMEBACK": "Comeback Swing",
   "SWING MOVE": "Territory Swing",
+  "BEACHHEAD": "Beachhead",
+  "FRONTLINE PUSH": "Frontline Push",
 };
 
 function terrainComboLabel(label, move = null) {
@@ -59,6 +61,8 @@ function terrainComboLabel(label, move = null) {
   if (raw === "CUT") return "Cut — split enemy territory";
   if (raw === "FORTIFY CHAIN") return "Fortify Chain — locked ground";
   if (raw === "LONG PATH") return "Long Path bonus";
+  if (raw === "BEACHHEAD") return "Beachhead — enemy territory breach";
+  if (raw === "FRONTLINE PUSH") return "Frontline Push — border advanced";
   return TERRAIN_LABELS[raw] || raw;
 }
 
@@ -572,7 +576,8 @@ export default function Home() {
   const [error,  setError]      = useState("");
   const [suggestions, setSugg]  = useState([]);
   const [mode,   setMode]       = useState("normal");
-  const [thinking, setThinking] = useState(false);
+  const [boardMode, setBoardMode] = useState("standard"); // WT_QUICK5_UI_V2
+const [thinking, setThinking] = useState(false);
   const [preview, setPreview]   = useState(null);
   const [showSummary, setSum]   = useState(false);
   const [copied, setCopied]     = useState(false);
@@ -789,7 +794,7 @@ export default function Home() {
     let lastErr;
     for (let attempt = 1; attempt <= 9; attempt++) {
       try {
-        const d = await createGame({ botLevel: m });
+        const d = await createGame({ botLevel: m, boardMode });
         setGameId(d.game_id); setState(d.state); setDailyMode(false);
         setSpectatorMode(false); setSpectatorSteps(0); setSpectatorNote("");
         reset(); setAnimGen(0); setBootMsg("");
@@ -1464,7 +1469,7 @@ export default function Home() {
       <div className="hdr">
         <div className="hdr-l">
           <h1>WORD TERRITORY{dailyMode&&dailyInfo&&<span className="dpill">Daily #{dailyInfo.dayNumber}</span>}</h1>
-          <p className="sub">Opening: {state.openingName} · {spectatorMode ? `Spectator Mode · ${state.botStyle || "Raider"} duel` : asyncMode ? `Async PvP · You are ${asyncRole}` : `Bot: ${state.botStyle || "Raider"}`} · {spectatorMode ? "Bot vs Bot" : thinking?"Bot thinking…":asyncMode ? (state.currentPlayer===asyncRole?`Your turn (${asyncRole})`:`Waiting for ${state.currentPlayer}`) : state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · Round {state.turn}</p>
+          <p className="sub">Opening: {state.openingName} · {spectatorMode ? `Spectator Mode · ${state.botStyle || "Raider"} duel` : asyncMode ? `Async PvP · You are ${asyncRole}` : `Bot: ${state.botStyle || "Raider"}`} · {spectatorMode ? "Bot vs Bot" : thinking?"Bot thinking…":asyncMode ? (state.currentPlayer===asyncRole?`Your turn (${asyncRole})`:`Waiting for ${state.currentPlayer}`) : state.currentPlayer===state.botPlayer?"Bot's turn":`Your turn (${state.currentPlayer})`} · {state.boardSize===5?'Quick 5×5':'Standard 7×7'} · Round {state.turn}</p>
           <p className="opening-note">{OPENING_NOTES[state.openingName] || "Words become territory. Each move reshapes the map."}</p>
           <p className="tagline">Words become territory. Each move reshapes the map.</p>
         </div>
@@ -1476,7 +1481,7 @@ export default function Home() {
               <select value={mode} onChange={e=>setMode(e.target.value)}>
                 <option value="normal">Normal</option>
                 <option value="strong">Strong</option>
-              </select>
+              </select> <label className="boardModeCtl">Board <select value={boardMode} onChange={e=>setBoardMode(e.target.value)}><option value="standard">Standard 7×7</option><option value="quick">Quick 5×5</option></select></label>
             </div>
           )}
           {dailyInfo&&!dailyMode&&(
@@ -1499,7 +1504,7 @@ export default function Home() {
           }
           <button className="bsm demo-btn" onClick={startSpectatorDemo}>▶ Watch Demo</button>
           {spectatorMode&&<button className="bsm" onClick={()=>{setSpectatorMode(false); setSpectatorNote("Demo paused. Press New Game to play.");}}>Stop Demo</button>}
-          <button className="bsm" onClick={async()=>{try{const d=await createAsyncMatch({botLevel:mode}); setAsyncMode(true); setSpectatorMode(false); setAsyncToken(d.redToken); setAsyncRole('RED'); setGameId(d.game_id); setState(d.state); setDailyMode(false); setInviteUrl(`${window.location.origin}${d.blueUrl}`); setMarket({active:d.state.marketLetters||[], preview:d.state.previewLetters||[], stats:[], freeLetterUsed:!!d.state.freeLetterUsed}); await refresh(d.game_id);}catch(e){setError(e.message||'Could not create async match');}}}>Async PvP</button>
+          <button className="bsm" onClick={async()=>{try{const d=await createAsyncMatch({botLevel:mode, boardMode}); setAsyncMode(true); setSpectatorMode(false); setAsyncToken(d.redToken); setAsyncRole('RED'); setGameId(d.game_id); setState(d.state); setDailyMode(false); setInviteUrl(`${window.location.origin}${d.blueUrl}`); setMarket({active:d.state.marketLetters||[], preview:d.state.previewLetters||[], stats:[], freeLetterUsed:!!d.state.freeLetterUsed}); await refresh(d.game_id);}catch(e){setError(e.message||'Could not create async match');}}}>Async PvP</button>
           {asyncMode&&<button className="bsm" onClick={async()=>{try{const d=await getAsyncMatch(gameId, asyncToken); setState(d.state); await refresh(gameId);}catch(e){setError(e.message||'Could not refresh match');}}}>Refresh Match</button>}
         </div>
       </div>

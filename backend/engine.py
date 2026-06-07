@@ -1681,6 +1681,12 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
         cross_words=cross_words_formed, row=row, col=col,
     )
 
+    beachhead_bonus = _beachhead_bonus(before, row, col, player, word)
+    if beachhead_bonus:
+        combos.append("BEACHHEAD")
+    if _frontline_push(before, row, col, player, delta["territory_gain"]):
+        combos.append("FRONTLINE PUSH")
+
 
     # ── Role bonus: award extra territory for strategic combos ───────────────
     bonus = 0
@@ -2238,7 +2244,8 @@ def choose_bot_move(state: GameState):
             elif label in ("CROSS WORD", "FORTIFY CHAIN"): combo_value += 5
             elif label in ("DOUBLE CAPTURE", "COMEBACK"): combo_value += 4
             elif label in ("LONG PATH", "CAPTURE"):  combo_value += 3
-            elif label in ("EDGE REACH", "FIRST CAPTURE"): combo_value += 2
+            elif label in ("EDGE REACH", "FIRST CAPTURE", "FRONTLINE PUSH"): combo_value += 2
+            elif label in ("BEACHHEAD",):            combo_value += 3
             else:                                     combo_value += 1
         value = my_value + word_score(move["word"]) * 1.4 + combo_value + _bot_style_bonus(state, last, move, player)
         if value > best_value:
@@ -2356,3 +2363,109 @@ def apply_bot_move(state: GameState):
             pass
     # Last resort: pass
     return pass_turn(state)
+
+
+# WT_QUICK_5X5_BOTH_V2
+# Quick mode is a small-board runtime layer. It keeps Standard 7x7 unchanged,
+# while allowing new games to be created as 5x5 sessions.
+try:
+    WT_STANDARD_BOARD_SIZE = int(BOARD_SIZE)
+except Exception:
+    WT_STANDARD_BOARD_SIZE = 7
+
+try:
+    WT_STANDARD_OPENING_COORDS = list(OPENING_COORDS)
+except Exception:
+    WT_STANDARD_OPENING_COORDS = [(1,3),(2,2),(2,3),(2,4),(2,5),(3,3),(4,3)]
+
+try:
+    WT_STANDARD_MAX_TURNS = int(MAX_TURNS)
+except Exception:
+    WT_STANDARD_MAX_TURNS = 35
+
+WT_QUICK_BOARD_SIZE = 5
+WT_QUICK_MAX_TURNS = 20
+WT_QUICK_OPENING_COORDS = [(0,2), (1,1), (1,2), (1,3), (2,2)]
+
+def _wt_quick_runtime_size(value=None):
+    try:
+        n = int(value)
+    except Exception:
+        n = WT_STANDARD_BOARD_SIZE
+    return WT_QUICK_BOARD_SIZE if n == WT_QUICK_BOARD_SIZE else WT_STANDARD_BOARD_SIZE
+
+def _wt_quick_set_runtime(size=None):
+    global BOARD_SIZE, OPENING_COORDS, MAX_TURNS
+    n = _wt_quick_runtime_size(size)
+    BOARD_SIZE = n
+    if n == WT_QUICK_BOARD_SIZE:
+        OPENING_COORDS = list(WT_QUICK_OPENING_COORDS)
+        MAX_TURNS = WT_QUICK_MAX_TURNS
+    else:
+        OPENING_COORDS = list(WT_STANDARD_OPENING_COORDS)
+        MAX_TURNS = WT_STANDARD_MAX_TURNS
+    return n
+
+def sync_board_runtime(state):
+    """Synchronize module-level board constants with this state's boardSize."""
+    return _wt_quick_set_runtime(getattr(state, "boardSize", WT_STANDARD_BOARD_SIZE))
+
+try:
+    _WT_QUICK_ORIGINAL_BUILD_INITIAL_STATE_V1
+except NameError:
+    _WT_QUICK_ORIGINAL_BUILD_INITIAL_STATE_V1 = build_initial_state
+
+def build_initial_state(bot_level: str = "normal", opening_idx: int | None = None, board_mode: str = "standard", board_size: int | None = None) -> GameState:
+    mode = str(board_mode or "standard").lower()
+    quick = mode in ("quick", "5", "5x5", "quick5", "quick-5x5") or board_size == WT_QUICK_BOARD_SIZE
+    runtime_size = _wt_quick_set_runtime(WT_QUICK_BOARD_SIZE if quick else WT_STANDARD_BOARD_SIZE)
+
+    try:
+        state = _WT_QUICK_ORIGINAL_BUILD_INITIAL_STATE_V1(bot_level=bot_level, opening_idx=opening_idx)
+    except TypeError:
+        if opening_idx is None:
+            state = _WT_QUICK_ORIGINAL_BUILD_INITIAL_STATE_V1(bot_level=bot_level)
+        else:
+            state = _WT_QUICK_ORIGINAL_BUILD_INITIAL_STATE_V1(bot_level=bot_level, opening_idx=opening_idx)
+
+    state.boardSize = runtime_size
+    try:
+        state.synergyState = dict(getattr(state, "synergyState", {}) or {})
+        state.synergyState["_boardMode"] = "quick" if quick else "standard"
+    except Exception:
+        pass
+    try:
+        if quick and not str(state.openingName).startswith("QUICK 5×5"):
+            state.openingName = "QUICK 5×5 · " + str(state.openingName or "OPENING")
+    except Exception:
+        pass
+    return state
+
+def _wt_quick_wrap_state_fn(fn):
+    def wrapped(state, *args, **kwargs):
+        sync_board_runtime(state)
+        return fn(state, *args, **kwargs)
+    wrapped.__name__ = getattr(fn, "__name__", "wrapped")
+    wrapped.__doc__ = getattr(fn, "__doc__", None)
+    return wrapped
+
+for _wt_name in [
+    "validate_and_apply_move",
+    "apply_seed_move",
+    "preview_move",
+    "pass_turn",
+    "find_candidate_words",
+    "find_almost_words",
+    "apply_bot_move",
+    "apply_demo_bot_move",
+    "get_market_stats",
+    "get_letter_preview_moves",
+    "get_threat_preview",
+    "get_placeable_empty_cells",
+]:
+    _wt_fn = globals().get(_wt_name)
+    if callable(_wt_fn) and not getattr(_wt_fn, "_wt_quick_wrapped", False):
+        _wt_wrapped = _wt_quick_wrap_state_fn(_wt_fn)
+        _wt_wrapped._wt_quick_wrapped = True
+        globals()[_wt_name] = _wt_wrapped
+
