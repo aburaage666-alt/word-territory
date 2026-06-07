@@ -297,6 +297,139 @@ function LeaderboardModal({ onClose, dailyInfo, myRank }) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
+
+// WT_MODERN_SHARE_REPLAY_V2
+function wtModernBoardEmoji(board) {
+  if (!Array.isArray(board)) return "";
+  return board.map(row => (Array.isArray(row) ? row : []).map(cell => {
+    if (!cell || !cell.letter) return "⬜";
+    if (cell.owner === "RED") return "🟥";
+    if (cell.owner === "BLUE") return "🟦";
+    return "⬜";
+  }).join("")).join("\n");
+}
+
+function wtModernMoveText(m, moveLabel) {
+  if (!m) return "—";
+  try {
+    if (typeof moveLabel === "function") return moveLabel(m);
+  } catch {}
+  const word = m.word || m.text || "—";
+  const gain = Number(m.territoryGained || m.captureCount || 0);
+  return gain ? `${word} +${gain}` : String(word);
+}
+
+function wtModernBestSwing(moveHistory) {
+  const arr = Array.isArray(moveHistory) ? moveHistory : [];
+  if (!arr.length) return null;
+  return arr.slice().sort((a,b) => {
+    const av = Number(a.territoryGained || 0) + Number(a.captureCount || 0) * 2;
+    const bv = Number(b.territoryGained || 0) + Number(b.captureCount || 0) * 2;
+    return bv - av;
+  })[0] || null;
+}
+
+function wtModernShareText({ state, redT, blueT, bestMove, moveLabel, dailyInfo, url, title="Word Territory" }) {
+  const winner = state?.winner || "";
+  const day = dailyInfo?.dayNumber ? ` #${dailyInfo.dayNumber}` : "";
+  const best = bestMove || wtModernBestSwing(state?.moveHistory);
+  const bestText = wtModernMoveText(best, moveLabel);
+  const board = wtModernBoardEmoji(state?.board);
+  const result = winner === "DRAW" ? "DRAW" : winner ? `${winner} WIN` : "RESULT";
+  return [
+    `${title}${day}`,
+    `${result} · RED ${redT}–${blueT} BLUE`,
+    best ? `Best Swing: ${bestText}` : null,
+    state?.openingName ? `Opening: ${String(state.openingName).replace(" OPENING", "")}` : null,
+    board,
+    url || (typeof location !== "undefined" ? location.origin : ""),
+  ].filter(Boolean).join("\n");
+}
+
+function wtModernDownloadShareCard({ state, redT, blueT, bestMove, moveLabel, dailyInfo, title="Word Territory" }) {
+  if (typeof document === "undefined") return;
+  const best = bestMove || wtModernBestSwing(state?.moveHistory);
+  const canvas = document.createElement("canvas");
+  canvas.width = 1080;
+  canvas.height = 1350;
+  const ctx = canvas.getContext("2d");
+  const red = "#ef4444";
+  const blue = "#3b82f6";
+  const dark = "#111827";
+  ctx.fillStyle = "#f8fafc";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle = dark;
+  ctx.font = "bold 64px system-ui, sans-serif";
+  ctx.fillText(title, 70, 110);
+  ctx.font = "34px system-ui, sans-serif";
+  const day = dailyInfo?.dayNumber ? `Daily #${dailyInfo.dayNumber}` : "Free Play";
+  ctx.fillText(day, 72, 165);
+  ctx.font = "bold 58px system-ui, sans-serif";
+  ctx.fillStyle = red; ctx.fillText(`RED ${redT}`, 72, 250);
+  ctx.fillStyle = blue; ctx.fillText(`BLUE ${blueT}`, 720, 250);
+  ctx.fillStyle = dark;
+  ctx.font = "32px system-ui, sans-serif";
+  ctx.fillText(`Best Swing: ${wtModernMoveText(best, moveLabel)}`, 72, 315);
+  const board = Array.isArray(state?.board) ? state.board : [];
+  const rows = board.length || 7;
+  const cols = Math.max(...board.map(r => Array.isArray(r) ? r.length : 0), 7);
+  const size = Math.floor(Math.min(900 / cols, 820 / rows));
+  const startX = Math.floor((1080 - size * cols) / 2);
+  const startY = 390;
+  for (let r=0; r<rows; r++) {
+    const row = board[r] || [];
+    for (let c=0; c<cols; c++) {
+      const cell = row[c] || {};
+      ctx.fillStyle = cell.owner === "RED" ? red : cell.owner === "BLUE" ? blue : "#e5e7eb";
+      ctx.fillRect(startX + c*size + 3, startY + r*size + 3, size-6, size-6);
+      if (cell.letter) {
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `bold ${Math.max(20, Math.floor(size*0.42))}px system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(cell.letter), startX+c*size+size/2, startY+r*size+size/2);
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+      }
+    }
+  }
+  ctx.fillStyle = dark;
+  ctx.font = "28px system-ui, sans-serif";
+  ctx.fillText(typeof location !== "undefined" ? location.origin : "word-territory", 72, 1280);
+  const a = document.createElement("a");
+  a.href = canvas.toDataURL("image/png");
+  a.download = `word-territory-${Date.now()}.png`;
+  a.click();
+  try { navigator.vibrate?.([40,30,70]); } catch {}
+}
+
+function wtModernReplayBestSwing({ state, bestMove, moveLabel, setBoardBannerText }) {
+  const best = bestMove || wtModernBestSwing(state?.moveHistory);
+  const text = `最大スイング：${wtModernMoveText(best, moveLabel)}`;
+  try { navigator.vibrate?.([70,40,100]); } catch {}
+  try {
+    if (typeof setBoardBannerText === "function") {
+      setBoardBannerText(text);
+      setTimeout(() => setBoardBannerText(""), 5200);
+      return;
+    }
+  } catch {}
+  if (typeof alert !== "undefined") alert(text);
+}
+
+function wtModernSharePanel({ state, redT, blueT, bestMove, moveLabel, dailyInfo, setBoardBannerText, setCopied }) {
+  if (!state?.winner) return null;
+  const shareText = wtModernShareText({ state, redT, blueT, bestMove, moveLabel, dailyInfo });
+  return (
+    <div className="modernSharePanel" style={{display:"flex",gap:8,flexWrap:"wrap",margin:"12px 0"}}>
+      <button className="ba" onClick={() => wtModernDownloadShareCard({ state, redT, blueT, bestMove, moveLabel, dailyInfo })}>共有画像を保存</button>
+      <button className="ba" onClick={async()=>{ try{ await navigator.clipboard.writeText(shareText); setCopied?.(true); setTimeout(()=>setCopied?.(false),1800);}catch{} }}>結果をコピー</button>
+      <button className="ba" onClick={() => wtModernReplayBestSwing({ state, bestMove, moveLabel, setBoardBannerText })}>最大スイング再生</button>
+    </div>
+  );
+}
+
+
 export default function Home() {
   const [gameId, setGameId]     = useState("");
   const [state,  setState]      = useState(null);
