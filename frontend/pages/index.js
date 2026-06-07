@@ -440,37 +440,13 @@ function wtModernSharePanel({ state, redT, blueT, bestMove, moveLabel, dailyInfo
 
 
 // WT_MODERN_SHARE_REPLAY_V3
-function wtModernBoardEmoji(board) {
-  if (!Array.isArray(board)) return "";
-  return board.map(row => (Array.isArray(row) ? row : []).map(cell => {
-    if (!cell || !cell.letter) return "⬜";
-    if (cell.owner === "RED") return "🟥";
-    if (cell.owner === "BLUE") return "🟦";
-    return "⬜";
-  }).join("")).join("\n");
-}
 
-function wtModernMoveText(m, moveLabel) {
-  if (!m) return "—";
-  try {
-    if (typeof moveLabel === "function") return moveLabel(m);
-  } catch {}
-  const word = m.word || m.text || "—";
-  const gain = Number(m.territoryGained || m.captureCount || 0);
-  return gain ? `${word} +${gain}` : String(word);
-}
 
-function wtModernBestSwing(moveHistory) {
-  const arr = Array.isArray(moveHistory) ? moveHistory : [];
-  if (!arr.length) return null;
-  return arr.slice().sort((a,b) => {
-    const av = Number(a.territoryGained || 0) + Number(a.captureCount || 0) * 2;
-    const bv = Number(b.territoryGained || 0) + Number(b.captureCount || 0) * 2;
-    return bv - av;
-  })[0] || null;
-}
 
-function wtModernShareText({ state, redT, blueT, bestMove, moveLabel, dailyInfo, url, title="Word Territory" }) {
+
+
+
+) {
   const winner = state?.winner || "";
   const day = dailyInfo?.dayNumber ? ` #${dailyInfo.dayNumber}` : "";
   const best = bestMove || wtModernBestSwing(state?.moveHistory);
@@ -487,7 +463,7 @@ function wtModernShareText({ state, redT, blueT, bestMove, moveLabel, dailyInfo,
   ].filter(Boolean).join("\n");
 }
 
-function wtModernDownloadShareCard({ state, redT, blueT, bestMove, moveLabel, dailyInfo, title="Word Territory" }) {
+) {
   if (typeof document === "undefined") return;
   const best = bestMove || wtModernBestSwing(state?.moveHistory);
   const canvas = document.createElement("canvas");
@@ -544,7 +520,7 @@ function wtModernDownloadShareCard({ state, redT, blueT, bestMove, moveLabel, da
   try { navigator.vibrate?.([40,30,70]); } catch {}
 }
 
-function wtModernReplayBestSwing({ state, bestMove, moveLabel, setBoardBannerText }) {
+) {
   const best = bestMove || wtModernBestSwing(state?.moveHistory);
   const text = `最大スイング：${wtModernMoveText(best, moveLabel)}`;
   try { navigator.vibrate?.([70,40,100]); } catch {}
@@ -558,7 +534,7 @@ function wtModernReplayBestSwing({ state, bestMove, moveLabel, setBoardBannerTex
   if (typeof alert !== "undefined") alert(text);
 }
 
-function wtModernSharePanel({ state, redT, blueT, bestMove, moveLabel, dailyInfo, setBoardBannerText, setCopied }) {
+) {
   if (!state?.winner) return null;
   const shareText = wtModernShareText({ state, redT, blueT, bestMove, moveLabel, dailyInfo });
   return (
