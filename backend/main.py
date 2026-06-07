@@ -231,7 +231,7 @@ def make_move(game_id: str, payload: MoveRequest):
     if not state:
         raise HTTPException(status_code=404, detail="Game not found")
     try:
-        next_state = validate_and_apply_move(state, payload.row, payload.col, payload.letter, payload.path, advance_market_flag=True)
+        next_state = validate_and_apply_move(state, payload.row, payload.col, payload.letter, payload.path, advance_market_flag=True, dazi=getattr(payload, "dazi", False))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     GAMES[game_id] = next_state
@@ -668,7 +668,7 @@ def async_move(game_id: str, token: str, payload: MoveRequest):
     if state.currentPlayer != player:
         raise HTTPException(status_code=400, detail="It is not your turn")
     try:
-        next_state = validate_and_apply_move(state, payload.row, payload.col, payload.letter, payload.path, advance_market_flag=True)
+        next_state = validate_and_apply_move(state, payload.row, payload.col, payload.letter, payload.path, advance_market_flag=True, dazi=getattr(payload, "dazi", False))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     _save_async_state(game_id, next_state, {"type": "WORD", "turn": state.turn, "player": player})

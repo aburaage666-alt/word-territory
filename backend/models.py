@@ -72,6 +72,7 @@ class GameState(BaseModel):
     marketLetters: List[str] = []      # 3 active letters to choose from
     previewLetters: List[str] = []     # next 3 letters coming
     freeLetterUsed: bool = False       # Wild letter (once per game)
+    daziUses: dict = {}                 # Disarm / 奪字 uses per player, max 2
 
 
 class CreateGameRequest(BaseModel):
@@ -93,6 +94,7 @@ class MoveRequest(BaseModel):
     path: List[Coord]
 
 
+    dazi: bool = False
 class SeedMoveRequest(BaseModel):
     row: int
     col: int

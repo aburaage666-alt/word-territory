@@ -1625,7 +1625,7 @@ def recent_duplicate_blocked(state: GameState, word: str) -> bool:
     return word.upper() in {w.upper() for w in state.usedWords}
 
 
-def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, path, advance_market_flag: bool = False):
+def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, path, advance_market_flag: bool = False, dazi: bool = False):
     if state.winner:
         raise ValueError("Game already finished")
     if not in_bounds(row, col):
@@ -1659,6 +1659,27 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
                 continue
             cells_claimed += 1
         cell.owner = player
+    # PHASE4_DAZI_DISARM_V1
+    # 奪字 / Disarm: up to twice per player, neutralize one LOCKED enemy cell
+    # used in the submitted word path. It keeps the glyph but clears owner+lock.
+    dazi_done = False
+    if dazi:
+        uses_map = dict(getattr(temp, "daziUses", {}) or {})
+        used = int(uses_map.get(player, 0) or 0)
+        if used >= 2:
+            raise ValueError("Disarm already used twice")
+        for p in path:
+            c = temp.board[p.row][p.col]
+            if c.fortified and c.owner is not None and c.owner != player:
+                c.owner = None
+                c.fortified = False
+                uses_map[player] = used + 1
+                temp.daziUses = uses_map
+                dazi_done = True
+                break
+        if not dazi_done:
+            raise ValueError("Disarm needs a locked enemy cell in your word path")
+
     apply_captures(temp, player)
     apply_locks(temp)
     recalc_scores(temp, current_player_for_word_score=player, last_word=word)
@@ -1727,6 +1748,8 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
         syn_text = synergy_activation_text(temp, combos, player, word, letter, actual_synergy_bonus)
         if syn_text:
             combos.append(f"SYNERGY:{syn_text}")
+    if dazi_done and "DAZI" not in combos:
+        combos.append("DAZI")
     if wild_cost_active:
         combos.append("WILD COST")
     if bonus > 0:

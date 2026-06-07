@@ -50,6 +50,7 @@ const TERRAIN_LABELS = {
   "SWING MOVE": "Territory Swing",
   "BEACHHEAD": "Beachhead",
   "FRONTLINE PUSH": "Frontline Push",
+  "DAZI": "Disarm",
   "ROTATION RAID": "Rotation Raid",
 };
 
@@ -65,6 +66,7 @@ function terrainComboLabel(label, move = null) {
   if (raw === "BEACHHEAD") return "Beachhead — enemy territory breach";
   if (raw === "FRONTLINE PUSH") return "Frontline Push — border advanced";
   if (raw === "ROTATION RAID") return "Rotation Raid — letters rotated";
+  if (raw === "DAZI" || raw === "奪字") return "Disarm — neutralized locked enemy letter";
   return TERRAIN_LABELS[raw] || raw;
 }
 
@@ -603,6 +605,7 @@ const [thinking, setThinking] = useState(false);
   const [synergyOpts, setSynergyOpts] = useState([]);
   const [synergy,     setSynergy]     = useState("");
   const [valuePrev,   setValuePrev]   = useState([]); // Territory Preview candidates
+  const [daziMode,   setDaziMode]   = useState(false); // Disarm / 奪字: next word can neutralize one enemy LOCK
   const [threats,     setThreats]     = useState([]); // opponent capture threats
   const [asyncMode,   setAsyncMode]   = useState(false);
   const [asyncToken,  setAsyncToken]  = useState("");
@@ -790,7 +793,7 @@ const [thinking, setThinking] = useState(false);
   }
   function resetValuePrev() { setValuePrev([]); }
   function reset() {
-    setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null); setValuePrev([]);
+    setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null); setValuePrev([]); setDaziMode(false);
     setSum(false); setCopied(false); setShareText(""); setNickname(""); setMyRank(null);
     setSubmitted(false); summaryFired.current = false;
   }
@@ -1261,7 +1264,7 @@ const [thinking, setThinking] = useState(false);
     }
 
     try {
-      const payload = {game_id:gameId,row:placed.row,col:placed.col,letter,path};
+      const payload = {game_id:gameId,row:placed.row,col:placed.col,letter,path,dazi:daziMode};
       const next = asyncMode ? await submitAsyncMove(gameId, asyncToken, payload) : await submitMove(payload);
       setState(next);
       // Update market from state immediately
@@ -1320,6 +1323,9 @@ const [thinking, setThinking] = useState(false);
   const pct  = Math.round((redT / Math.max(redT+blueT,1)) * 100);
   const incPlaced = placed && path.some(p=>p.row===placed.row&&p.col===placed.col);
   const ok = preview?.isInDictionary && preview?.includesPlacedCell;
+  const daziUsed = Number((state?.daziUses || {})[state?.currentPlayer] || 0);
+  const daziRemaining = Math.max(0, 2 - daziUsed);
+  const daziLabel = daziMode ? "奪字ON" : "奪字";
   const topMoves = [...(state?.moveHistory||[])].filter(m=>m.moveType==="WORD")
     .sort((a,b)=>(b.territoryGained*2+b.wordScoreGained*1.5+b.fortifiedCellsGained*2+(b.captureCount?5:0)+(b.comboLabels?.length||0)*1.5)
                 -(a.territoryGained*2+a.wordScoreGained*1.5+a.fortifiedCellsGained*2+(a.captureCount?5:0)+(a.comboLabels?.length||0)*1.5))
@@ -1344,7 +1350,7 @@ const [thinking, setThinking] = useState(false);
     (lastMove.captureCount || 0) > 0 ||
     (lastMove.fortifiedCellsGained || 0) > 0 ||
     (lastMove.territoryGained || 0) >= 5 ||
-    (lastMove.comboLabels || []).some(x => String(x).includes("BRIDGE") || String(x).includes("SYNERGY") || String(x).includes("CAPTURE"))
+    (lastMove.comboLabels || []).some(x => String(x).includes("BRIDGE") || String(x).includes("SYNERGY") || String(x).includes("CAPTURE") || String(x).includes("DAZI") || String(x).includes("奪字"))
   );
 
   const boardOpeningClass = `opening-${String(state?.openingName || "plain").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-opening$/,"").replace(/^-|-$/g,"") || "plain"}`;
@@ -1576,6 +1582,7 @@ const [thinking, setThinking] = useState(false);
             <li><strong>Seed</strong> — place a letter without capturing when stuck. Good for setting up future words.</li>
             <li><strong>Goal:</strong> More red cells than blue wins. Territory beats vocabulary.</li>
             <li><strong>Daily Challenge</strong> — same board worldwide each day. One attempt. Strong bot.</li>
+          <li><strong>Disarm</strong> — twice per game. Include a locked enemy letter in your word to neutralize that lock.</li>
           </ol>
         </div>
       )}
@@ -1589,6 +1596,7 @@ const [thinking, setThinking] = useState(false);
       {synergyFlash&&<div className="bnr synergy-flash">{synergyFlash}</div>}
           {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
       {error&&<div className="bnr err">{error}<button className="bx" onClick={()=>setError("")}>✕</button></div>}
+      {daziMode&&<div className="bnr dazi-help-banner">{"Disarm mode: include a locked enemy letter in your word to neutralize it."}</div>}
       
 
 
@@ -1815,6 +1823,7 @@ const [thinking, setThinking] = useState(false);
               {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()} title={state?.selectedSynergy==="SEED_TACTICIAN" ? "Seed (free — +3T next word)" : "Seed costs 1 territory"}>
               <span className="seed-label">{lastStand ? "Reclaim" : "Seed"}</span>{state?.selectedSynergy!=="SEED_TACTICIAN" && <span className="seed-cost">{lastStand ? "Free" : "Cost -1"}</span>}
             </button>}
+              {!isTutorial && <button className={`ba bdazi ${daziMode ? "active" : ""}`} onClick={()=>setDaziMode(v=>!v)} disabled={!human() || daziRemaining<=0} title="Twice per game. Include a locked enemy letter in your word to neutralize it.">{daziMode ? "Disarm ON" : "Disarm"} {daziRemaining}/2</button>}
               <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
               {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
               {!isTutorial && !rotateRaidUsed && <button className={`ba brotate ${rotateMode ? "active" : ""}`} onClick={()=>{ if(rotateTarget) performRotateRaid(); else { setRotateMode(v=>!v); setRotateTarget(null); setPath([]); setPlaced(null); setPreview(null); setError("Choose the top-left of a 2x2 block. Rotation alone captures nothing."); } }} disabled={!human()} title="Once per game. Rotate letters only in a 2x2 block touching enemy territory. Ownership does not move.">{rotateTarget ? "Confirm Rotation" : rotateMode ? "Pick 2x2" : "Rotation Raid"}</button>}
