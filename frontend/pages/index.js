@@ -1066,6 +1066,30 @@ const [thinking, setThinking] = useState(false);
 
   function clickCell(r,c) {
     if (!state || !human()) return;
+    // WT_DAZI_ROTATE_EARLY_BRANCH_V1
+    if (rotateMode) { handleRotateCell(r,c); return; }
+    if (daziMode) {
+      const cell = state?.board?.[r]?.[c];
+      if (!cell?.letter) { setError("Disarm uses existing board letters only."); return; }
+      if (path.length > 0 && path[path.length - 1].row === r && path[path.length - 1].col === c) {
+        setPath(path.slice(0, -1));
+        return;
+      }
+      if (isSel(r, c)) return;
+      if (path.length === 0) {
+        setPlaced(null);
+        setLetter("");
+        setPreview(null);
+        setPath([{row:r, col:c}]);
+        setError("");
+        return;
+      }
+      const last = path[path.length - 1];
+      if (!adj(last, {row:r, col:c})) { setError("Connect adjacent letters."); return; }
+      setPath(prev => [...prev, {row:r, col:c}]);
+      setError("");
+      return;
+    }
     if (rotateMode) { handleRotateCell(r,c); return; }
     playSfx("click");
     const cell = state.board[r][c];
@@ -1735,7 +1759,7 @@ const [thinking, setThinking] = useState(false);
               </div>
             </div>
                                     <div className="brow">
-              <button className={`ba bsubmit ${showTutorial && tutorialStep===3 ? "tut-pulse tut-submit" : ""}`} onClick={daziMode ? daziV2 : submit} disabled={!human()}>{daziMode ? "Confirm Disarm" : showTutorial && tutorialStep===3 ? "Capture Word ⚔" : ok ? "Claim Territory ⚔" : "Submit"}</button>
+              <button className={`ba bsubmit ${showTutorial && tutorialStep===3 ? "tut-pulse tut-submit" : ""}`} onClick={daziMode ? daziV2 : submit} disabled={!human() || rotateMode}>{daziMode ? "Confirm Disarm" : showTutorial && tutorialStep===3 ? "Capture Word ⚔" : ok ? "Claim Territory ⚔" : "Submit"}</button>
               <button className="ba bseed" onClick={seed} disabled={!human() || daziMode || rotateMode} title={state?.selectedSynergy==="SEED_TACTICIAN" ? "Seed (free — +3T next word)" : "Seed costs 1 territory"}>
                 <span className="seed-label">{lastStand ? "Reclaim" : "Seed"}</span>{state?.selectedSynergy!=="SEED_TACTICIAN" && <span className="seed-cost">{lastStand ? "Free" : "Cost -1"}</span>}
               </button>
