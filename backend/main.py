@@ -69,6 +69,7 @@ from engine import (
     apply_bot_move,
     apply_demo_bot_move,
     apply_seed_move,
+    apply_dazi_move,
     build_initial_state,
     find_candidate_words,
     find_almost_words,
@@ -95,6 +96,7 @@ from models import (
     GameState,
     LeaderboardEntry,
     MoveRequest,
+    DaziMoveRequest,
     PreviewMoveRequest,
     PreviewMoveResponse,
     SeedMoveRequest,
@@ -277,6 +279,19 @@ def preview(game_id: str, payload: PreviewMoveRequest):
         raise HTTPException(status_code=404, detail="Game not found")
     return preview_move(state, payload.row, payload.col, payload.letter, payload.path)
 
+
+
+@app.post("/games/{game_id}/dazi-move", response_model=GameState)
+def dazi_move(game_id: str, payload: DaziMoveRequest):
+    state = GAMES.get(game_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Game not found")
+    try:
+        next_state = apply_dazi_move(state, payload.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    GAMES[game_id] = next_state
+    return next_state
 
 @app.post("/games/{game_id}/pass", response_model=GameState)
 def do_pass(game_id: str):
@@ -706,6 +721,21 @@ def async_seed_move(game_id: str, token: str, payload: SeedMoveRequest):
     _save_async_state(game_id, next_state, {"type": "SEED", "turn": state.turn, "player": player})
     return next_state
 
+
+
+@app.post("/async/games/{game_id}/dazi-move")
+def async_dazi_move(game_id: str, token: str, payload: DaziMoveRequest):
+    row, state, player = _load_async_game(game_id, token)
+    if state.winner:
+        return state
+    if state.currentPlayer != player:
+        raise HTTPException(status_code=400, detail="It is not your turn")
+    try:
+        next_state = apply_dazi_move(state, payload.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _save_async_state(game_id, next_state, {"type": "DAZI", "turn": state.turn, "player": player})
+    return next_state
 
 @app.post("/async/games/{game_id}/pass")
 def async_pass(game_id: str, token: str):

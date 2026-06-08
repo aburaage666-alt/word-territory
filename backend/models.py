@@ -95,6 +95,11 @@ class MoveRequest(BaseModel):
 
 
     dazi: bool = False
+
+class DaziMoveRequest(BaseModel):
+    path: List[Coord]
+
+
 class SeedMoveRequest(BaseModel):
     row: int
     col: int

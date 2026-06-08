@@ -51,6 +51,24 @@ export async function seedMove(gameId, payload) {
   return readJson(res);
 }
 
+export async function daziMove(gameId, payload) {
+  const res = await fetchWithTimeout(`${API_BASE}/games/${gameId}/dazi-move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return readJson(res);
+}
+
+export async function daziAsyncMove(gameId, token, payload) {
+  const res = await fetchWithTimeout(`${API_BASE}/async/games/${gameId}/dazi-move?token=${encodeURIComponent(token)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return readJson(res);
+}
+
 
 
 export async function rotateBlock(gameId, payload) {

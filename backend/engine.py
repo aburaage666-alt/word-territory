@@ -1624,6 +1624,124 @@ def recent_duplicate_blocked(state: GameState, word: str) -> bool:
     """
     return word.upper() in {w.upper() for w in state.usedWords}
 
+# WT_DAZI_V2_INDEPENDENT_ACTION
+def _dazi_uses_key(player: str) -> str:
+    return f"_daziUses_{player}"
+
+def _coord_key(p) -> tuple[int, int]:
+    return (int(p.row), int(p.col))
+
+def apply_dazi_move(state: GameState, path):
+    """Independent Disarm/Dazi action.
+
+    It consumes the turn, places no new letter, and neutralizes one locked enemy
+    cell only if the player can form a valid word using existing board letters.
+    """
+    if state.winner:
+        raise ValueError("Game already finished")
+
+    player = state.currentPlayer
+    opponent = "BLUE" if player == "RED" else "RED"
+
+    if state.synergyState is None:
+        state.synergyState = {}
+
+    uses_key = _dazi_uses_key(player)
+    used = int(state.synergyState.get(uses_key, 0) or 0)
+    if used >= 2:
+        raise ValueError("Disarm has already been used twice.")
+
+    if not path or len(path) < _WORD_MIN:
+        raise ValueError(f"Disarm needs a connected word path of at least {_WORD_MIN} letters.")
+    if len(path) > _WORD_MAX:
+        raise ValueError(f"Disarm word path must be {_WORD_MIN}–{_WORD_MAX} letters.")
+
+    seen = set()
+    chars = []
+    target = None
+
+    for i, p in enumerate(path):
+        r, c = _coord_key(p)
+        bs = len(state.board)
+        if r < 0 or c < 0 or r >= bs or c >= bs:
+            raise ValueError("Path out of bounds")
+        key = (r, c)
+        if key in seen:
+            raise ValueError("You cannot use the same cell twice in a path.")
+        seen.add(key)
+        if i > 0 and not are_adjacent(path[i - 1], p):
+            raise ValueError("Cells must be directly connected — no diagonals.")
+
+        cell = state.board[r][c]
+        if cell.letter is None:
+            raise ValueError("Disarm path must use existing letters only.")
+
+        chars.append(_norm_letter(cell.letter))
+
+        if target is None and cell.owner == opponent and bool(cell.fortified):
+            target = (r, c)
+
+    if target is None:
+        raise ValueError("Disarm must include a locked enemy letter.")
+
+    word = _norm_word("".join(chars))
+    if len(word) < _WORD_MIN or len(word) > _WORD_MAX:
+        raise ValueError(f"Need {_WORD_MIN}–{_WORD_MAX} tiles. '{word}' has {len(word)}.")
+    if recent_duplicate_blocked(state, word):
+        raise ValueError(f"You already played {word} this game. Try another word.")
+    if not is_valid_word(word):
+        raise ValueError(f"'{word}' is not in the dictionary. Try a common word.")
+
+    temp = deepcopy(state)
+    tr, tc = target
+
+    # Neutralize only one locked enemy letter. The glyph remains.
+    temp.board[tr][tc].owner = None
+    temp.board[tr][tc].fortified = False
+
+    recalc_scores(temp)
+
+    if temp.synergyState is None:
+        temp.synergyState = {}
+    temp.synergyState[uses_key] = used + 1
+
+    red_total = total_score(temp, "RED")
+    blue_total = total_score(temp, "BLUE")
+
+    item = MoveHistoryItem(
+        turn=state.turn,
+        player=player,
+        word=word,
+        moveType="DAZI",
+        placedRow=tr,
+        placedCol=tc,
+        placedLetter=temp.board[tr][tc].letter,
+        path=[Coord(row=int(p.row), col=int(p.col)) for p in path],
+        wordScoreGained=0,
+        territoryGained=0,
+        fortifiedCellsGained=0,
+        captureCount=0,
+        comboLabels=["DISARM"],
+        redTotalAfter=red_total,
+        blueTotalAfter=blue_total,
+    )
+
+    temp.usedWords.append(word)
+    temp.moveHistory.append(item)
+    temp.recentMoves = [f"{player}: {word} [DISARM]"] + temp.recentMoves[:4]
+    temp.lastChangedCells = [Coord(row=tr, col=tc)]
+    temp.lastCapturedCells = []
+    temp.lastFortifiedCells = []
+    temp.lastComboLabels = ["DISARM"]
+
+    temp.currentPlayer = other_player(player)
+    temp.turn += 1
+    temp.consecutivePasses = 0
+
+    if is_game_over(temp):
+        temp.winner = decide_winner(temp)
+
+    return temp
 
 def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, path, advance_market_flag: bool = False, dazi: bool = False):
     if state.winner:

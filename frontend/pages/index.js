@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   botMove, autoMove, createGame, createDailyGame, getDailyInfo, getDailyLeaderboard,
   getAlmost, getLetterPreview, getMarket, getSuggestions, getSynergyOptions, selectSynergy, getThreat, createAsyncMatch, getAsyncMatch, submitAsyncMove, seedAsyncMove, rotateAsyncBlock, passAsyncTurn,
-  joinWaitlist, passTurn, previewMove, rotateBlock, seedMove, submitDailyScore, submitMove,
+  joinWaitlist, passTurn, previewMove, rotateBlock, seedMove, submitDailyScore, submitMove, daziMove, daziAsyncMove,
   useFreeLetter,
 } from "../lib/api";
 
@@ -451,6 +451,7 @@ export default function Home() {
   const [path,   setPath]       = useState([]);
   const [placed, setPlaced]     = useState(null);
   const [letter, setLetter]     = useState("");
+  const [daziMode, setDaziMode] = useState(false);
   const [error,  setError]      = useState("");
   const [suggestions, setSugg]  = useState([]);
   const [mode,   setMode]       = useState("normal");
@@ -667,7 +668,7 @@ const [thinking, setThinking] = useState(false);
   }
   function resetValuePrev() { setValuePrev([]); }
   function reset() {
-    setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null); setValuePrev([]); setDaziMode(false);
+    setPath([]); setPlaced(null); setLetter(""); setError(""); setPreview(null); setValuePrev([]); setDaziMode(false); setDaziMode(false);
     setSum(false); setCopied(false); setShareText(""); setNickname(""); setMyRank(null);
     setSubmitted(false); summaryFired.current = false;
   }
@@ -1070,6 +1071,29 @@ const [thinking, setThinking] = useState(false);
     playSfx("click");
     const cell = state.board[r][c];
 
+    // WT_DAZI_V2_CLICKCELL_BRANCH
+    if (daziMode) {
+      if (!cell?.letter) return;
+      if (path.length > 0 && path[path.length - 1].row === r && path[path.length - 1].col === c) {
+        setPath(path.slice(0, -1));
+        return;
+      }
+      if (isSel(r, c)) return;
+      if (path.length === 0) {
+        setPlaced(null);
+        setLetter("");
+        setPreview(null);
+        setPath([{row:r, col:c}]);
+        setError("");
+        return;
+      }
+      const last = path[path.length - 1];
+      if (!adj(last, {row:r, col:c})) return;
+      setPath(prev => [...prev, {row:r, col:c}]);
+      setError("");
+      return;
+    }
+
     // Deselect last cell if tapping it again (undo last step)
     if (path.length > 0 && path[path.length-1].row===r && path[path.length-1].col===c) {
       const newPath = path.slice(0, -1);
@@ -1148,6 +1172,23 @@ const [thinking, setThinking] = useState(false);
       getAlmost(gameId).then(setAlmost).catch(()=>{});
     } catch(e) { setError(e.message||"Move failed"); }
   }
+  async function daziV2() {
+    if (!daziMode) return;
+    if (!path || path.length < 2) {
+      setError("奪字する単語の文字を2文字以上つないでください。");
+      return;
+    }
+    try {
+      const payload = { path };
+      const next = asyncMode ? await daziAsyncMove(gameId, asyncToken, payload) : await daziMove(gameId, payload);
+      setState(next);
+      reset(); await refresh();
+      getAlmost(gameId).then(setAlmost).catch(()=>{});
+    } catch(e) {
+      setError(e.message || "奪字に失敗しました");
+    }
+  }
+
   async function seed() {
     if (!placed) { setError("Tap a green square first."); return; }
     if (!letter) { setError("Type one letter in the input box."); return; }
@@ -1679,7 +1720,9 @@ const [thinking, setThinking] = useState(false);
                     </>
                 ):(
                   <div className="pvhint">
-                    {!placed
+                    {daziMode
+                      ? "奪字モード：既存文字だけをつなぎ、ロック敵文字を含む有効語を作ってください。緑マスは不要です。"
+                      : !placed
                       ? (market.active.length > 0 ? (thinking ? "Bot is thinking..." : state?.winner ? "Battle Report" : "Choose a tile from Letter Market above ↑ then read the Territory Preview.") : "Tap a green square to place a letter.")
                       : !letter
                       ? "Type one letter."
@@ -1693,12 +1736,13 @@ const [thinking, setThinking] = useState(false);
               </div>
             </div>
             <div className="brow">
-              <button className={`ba bsubmit ${showTutorial && tutorialStep===3 ? "tut-pulse tut-submit" : ""}`} onClick={submit} disabled={!human()}>{showTutorial && tutorialStep===3 ? "Capture Word ⚔" : ok ? "Claim Territory ⚔" : "Submit"}</button>
+              <button className={`ba bsubmit ${showTutorial && tutorialStep===3 ? "tut-pulse tut-submit" : ""}`} onClick={daziMode ? daziV2 : submit} disabled={!human()}>{daziMode ? "奪字確定" : showTutorial && tutorialStep===3 ? "語を確定 ⚔" : ok ? "領地を確定 ⚔" : "決定"}</button>
               {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()} title={state?.selectedSynergy==="SEED_TACTICIAN" ? "Seed (free — +3T next word)" : "Seed costs 1 territory"}>
               <span className="seed-label">{lastStand ? "Reclaim" : "Seed"}</span>{state?.selectedSynergy!=="SEED_TACTICIAN" && <span className="seed-cost">{lastStand ? "Free" : "Cost -1"}</span>}
             </button>}
               {!isTutorial && <button className={`ba bdazi ${daziMode ? "active" : ""}`} onClick={()=>setDaziMode(v=>!v)} disabled={!human() || daziRemaining<=0} title="Twice per game. Include a locked enemy letter in your word to neutralize it.">{daziMode ? "Disarm ON" : "Disarm"} {daziRemaining}/2</button>}
               <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
+              {!isTutorial && <button className={`ba ${daziMode ? "active" : ""}`} onClick={()=>{ setDaziMode(v=>!v); setPath([]); setPlaced(null); setLetter(""); setPreview(null); setError(!daziMode ? "奪字モード：盤面上の既存文字だけをつなぎ、ロックされた敵文字を含む有効語を作ると、その1マスを中立化します。" : ""); }} disabled={!human() || daziRemaining<=0} title="緑マス不要。ロック敵文字を含む既存文字パスで発動します。">奪字 {daziMode ? "ON " : ""}{daziRemaining}/2</button>}{/* WT_DAZI_V2_TOGGLE_BUTTON */}
               {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
               {!isTutorial && !rotateRaidUsed && <button className={`ba brotate ${rotateMode ? "active" : ""}`} onClick={()=>{ if(rotateTarget) performRotateRaid(); else { setRotateMode(v=>!v); setRotateTarget(null); setPath([]); setPlaced(null); setPreview(null); setError("Choose the top-left of a 2x2 block. Rotation alone captures nothing."); } }} disabled={!human()} title="Once per game. Rotate letters only in a 2x2 block touching enemy territory. Ownership does not move.">{rotateTarget ? "Confirm Rotation" : rotateMode ? "Pick 2x2" : "Rotation Raid"}</button>}
               {rotateMode && <button className="ba" onClick={()=>{setRotateMode(false);setRotateTarget(null);setError("");}} disabled={!human()}>Cancel</button>}
