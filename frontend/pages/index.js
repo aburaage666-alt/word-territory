@@ -1735,12 +1735,10 @@ const [thinking, setThinking] = useState(false);
               </div>
             </div>
             <div className="brow">
-              <button className={`ba bsubmit ${showTutorial && tutorialStep===3 ? "tut-pulse tut-submit" : ""}`} onClick={daziMode ? daziV2 : submit} disabled={!human()}>{daziMode ? "奪字確定" : showTutorial && tutorialStep===3 ? "語を確定 ⚔" : ok ? "領地を確定 ⚔" : "決定"}</button>
-              {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()} title={state?.selectedSynergy==="SEED_TACTICIAN" ? "Seed (free — +3T next word)" : "Seed costs 1 territory"}>
+                            {!isTutorial && <button className="ba bseed" onClick={seed} disabled={!human()} title={state?.selectedSynergy==="SEED_TACTICIAN" ? "Seed (free — +3T next word)" : "Seed costs 1 territory"}>
               <span className="seed-label">{lastStand ? "Reclaim" : "Seed"}</span>{state?.selectedSynergy!=="SEED_TACTICIAN" && <span className="seed-cost">{lastStand ? "Free" : "Cost -1"}</span>}
             </button>}
-              {!isTutorial && <button className={`ba bdazi ${daziMode ? "active" : ""}`} onClick={()=>setDaziMode(v=>!v)} disabled={!human() || daziRemaining<=0} title="Twice per game. Include a locked enemy letter in your word to neutralize it.">{daziMode ? "Disarm ON" : "Disarm"} {daziRemaining}/2</button>}
-              <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
+                            <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); }} disabled={!human()}>Clear</button>
               {!isTutorial && <button className={`ba ${daziMode ? "active" : ""}`} onClick={()=>{ setDaziMode(v=>!v); setPath([]); setPlaced(null); setLetter(""); setPreview(null); setError(!daziMode ? "奪字モード：盤面上の既存文字だけをつなぎ、ロックされた敵文字を含む有効語を作ると、その1マスを中立化します。" : ""); }} disabled={!human() || daziRemaining<=0} title="緑マス不要。ロック敵文字を含む既存文字パスで発動します。">奪字 {daziMode ? "ON " : ""}{daziRemaining}/2</button>}{/* WT_DAZI_V2_TOGGLE_BUTTON */}
               {!isTutorial && <button className="ba" onClick={pass} disabled={!human()}>Pass</button>}
               {!isTutorial && !rotateRaidUsed && <button className={`ba brotate ${rotateMode ? "active" : ""}`} onClick={()=>{ if(rotateTarget) performRotateRaid(); else { setRotateMode(v=>!v); setRotateTarget(null); setPath([]); setPlaced(null); setPreview(null); setError("Choose the top-left of a 2x2 block. Rotation alone captures nothing."); } }} disabled={!human()} title="Once per game. Rotate letters only in a 2x2 block touching enemy territory. Ownership does not move.">{rotateTarget ? "Confirm Rotation" : rotateMode ? "Pick 2x2" : "Rotation Raid"}</button>}
