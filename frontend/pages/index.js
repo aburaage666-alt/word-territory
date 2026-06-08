@@ -480,7 +480,6 @@ const [thinking, setThinking] = useState(false);
   const [synergyOpts, setSynergyOpts] = useState([]);
   const [synergy,     setSynergy]     = useState("");
   const [valuePrev,   setValuePrev]   = useState([]); // Territory Preview candidates
-  const [daziMode,   setDaziMode]   = useState(false); // Disarm / 奪字: next word can neutralize one enemy LOCK
   const [threats,     setThreats]     = useState([]); // opponent capture threats
   const [asyncMode,   setAsyncMode]   = useState(false);
   const [asyncToken,  setAsyncToken]  = useState("");
