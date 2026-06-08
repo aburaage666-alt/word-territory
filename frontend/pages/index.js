@@ -210,13 +210,13 @@ function updateStreak(dateStr) {
 }
 
 // ── Cell ──────────────────────────────────────────────────────────────────────
-function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, bridgePath, lockNeighbor, tutorialPlace, tutorialPath, disabled, gen, attack, inPath, threat, threatMove, rotateTarget, captureOrder, lockOrder, onClick }) {
+function Cell({ cell, sel, placed, legal, changed, captured, lockedNow, bridgePath, lockNeighbor, tutorialPlace, tutorialPath, disabled, gen, attack, inPath, threat, threatMove, rotateTarget, captureOrder, lockOrder, onClick, daziTarget}) {
   const cls = ["cell",
     cell.owner === "RED" ? "cr" : cell.owner === "BLUE" ? "cb" : "",
     cell.fortified ? "ft" : "", sel ? "sl" : "", placed ? "pl" : "",
     legal ? "lg" : "", disabled && !sel ? "dm" : "",
     attack ? "atk" : "",   // opponent cell that can be attacked
-    threat ? "threat" : "", threatMove ? "threatMove" : "", rotateTarget ? "rotate-target" : "",
+    threat ? "threat" : "", threatMove ? "threatMove" : "", rotateTarget ? "rotate-target" : "", daziTarget ? "dazi-target" : "",
     bridgePath ? "bridge-path" : "", lockNeighbor ? "lock-neighbor" : "",
     tutorialPlace ? "tut-pulse tut-cell" : "", tutorialPath ? "tut-arrow-cell" : "",
     inPath ? "inpath" : "", // opponent cell currently in selected path (will be captured)
@@ -444,6 +444,26 @@ function wtModernSharePanel({ state, redT, blueT, bestMove, moveLabel, dailyInfo
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+// WT_DAZI_TARGET_HELPER_V1
+function wtDaziEnemyOf(player) {
+  return player === "RED" ? "BLUE" : "RED";
+}
+function wtDaziPathHasEnemy(state, path) {
+  if (!state?.board || !Array.isArray(path) || path.length === 0) return false;
+  const enemy = wtDaziEnemyOf(state.currentPlayer);
+  return path.some(p => state.board?.[p.row]?.[p.col]?.owner === enemy);
+}
+function wtDaziTargetKeys(state) {
+  const keys = new Set();
+  if (!state?.board) return keys;
+  const enemy = wtDaziEnemyOf(state.currentPlayer);
+  state.board.forEach((row, r) => {
+    (row || []).forEach((cell, c) => {
+      if (cell?.letter && cell?.owner === enemy) keys.add(`${r},${c}`);
+    });
+  });
+  return keys;
+}
 
 export default function Home() {
   const [gameId, setGameId]     = useState("");
@@ -1201,7 +1221,13 @@ const [thinking, setThinking] = useState(false);
       setError("奪字する単語の文字を2文字以上つないでください。");
       return;
     }
-    try {
+    
+    // WT_DAZI_TARGET_PRECHECK_V1
+    if (!wtDaziPathHasEnemy(state, path)) {
+      setError("Disarm needs a word that includes at least one purple enemy letter.");
+      return;
+    }
+try {
       const payload = { path };
       const next = asyncMode ? await daziAsyncMove(gameId, asyncToken, payload) : await daziMove(gameId, payload);
       setState(next);
@@ -1282,6 +1308,7 @@ const [thinking, setThinking] = useState(false);
     return new Set([asKey(r,c), asKey(r,c+1), asKey(r+1,c), asKey(r+1,c+1)]);
   }, [rotateTarget?.row, rotateTarget?.col]);
   const rotateRaidUsed = !!state?.synergyState?.rotationRaidUsed;
+  const daziTargetSet = useMemo(() => daziMode ? wtDaziTargetKeys(state) : new Set(), [daziMode, state?.board, state?.currentPlayer]);
   const lastMove = (state?.moveHistory || [])[Math.max((state?.moveHistory?.length || 0) - 1, 0)] || null;
   const lastMoveInsights = moveInsightLines(lastMove);
   const lastMoveIsSwing = !!lastMove && (
@@ -1563,7 +1590,7 @@ const [thinking, setThinking] = useState(false);
                     captureOrder={capturedOrderMap.get(k)} lockOrder={lockedOrderMap.get(k)}
                     disabled={isDim(cell.row,cell.col)} gen={animGen}
                     attack={attackableSet.has(k) && !isSel(cell.row,cell.col)}
-                    threat={threatCellSet.has(k)} threatMove={threatMoveSet.has(k)} rotateTarget={rotateTargetSet.has(k)}
+                    threat={threatCellSet.has(k)} threatMove={threatMoveSet.has(k)} rotateTarget={rotateTargetSet.has(k)} daziTarget={daziTargetSet.has(k)}
                     inPath={inPathOpponentSet.has(k)}
                     onClick={()=>clickCell(cell.row,cell.col)}/>
                   {showVp && <div className={`vp-overlay vp-${vp.tier || 'basic'}`} title={vp.word ? `${vp.word} · Territory Swing +${vp.gain||0}${vp.synergyPreview ? ' · '+vp.synergyPreview : ''}` : 'Setup'}>
@@ -2594,6 +2621,26 @@ const [thinking, setThinking] = useState(false);
         .lm-tile{min-width:52px}
       }
 
-    `}</style>
+    `}
+        /* WT_DAZI_TARGET_CSS_V1 */
+        .cell.dazi-target{
+          box-shadow: inset 0 0 0 3px #8b5cf6, 0 0 0 3px rgba(139,92,246,.22);
+          border-color:#8b5cf6 !important;
+          background:linear-gradient(180deg,#f5f3ff,#ede9fe);
+        }
+        .cell.dazi-target::after{
+          content:"D";
+          position:absolute;
+          right:4px;
+          bottom:3px;
+          font-size:10px;
+          font-weight:900;
+          color:#6d28d9;
+          background:#fff;
+          border:1px solid rgba(109,40,217,.35);
+          border-radius:999px;
+          padding:0 3px;
+        }
+</style>
   </>;
 }
