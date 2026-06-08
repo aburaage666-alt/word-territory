@@ -1634,7 +1634,7 @@ def _coord_key(p) -> tuple[int, int]:
 def apply_dazi_move(state: GameState, path):
     """Independent Disarm/Dazi action.
 
-    It consumes the turn, places no new letter, and neutralizes one locked enemy
+    It consumes the turn, places no new letter, and neutralizes one enemy
     cell only if the player can form a valid word using existing board letters.
     """
     if state.winner:
@@ -1678,11 +1678,19 @@ def apply_dazi_move(state: GameState, path):
 
         chars.append(_norm_letter(cell.letter))
 
-        if target is None and cell.owner == opponent and bool(cell.fortified):
-            target = (r, c)
+        if cell.owner == opponent:
+            # Prefer a locked enemy letter, but allow any enemy letter.
+            # This makes Dazi usable as an invasion tool even when no LOCK is available.
+            if target is None:
+                target = (r, c)
+            else:
+                tr, tc = target
+                previous_locked = bool(state.board[tr][tc].fortified)
+                if bool(cell.fortified) and not previous_locked:
+                    target = (r, c)
 
     if target is None:
-        raise ValueError("Disarm must include a locked enemy letter.")
+        raise ValueError("Disarm must include an enemy letter.")
 
     word = _norm_word("".join(chars))
     if len(word) < _WORD_MIN or len(word) > _WORD_MAX:
@@ -1796,7 +1804,7 @@ def validate_and_apply_move(state: GameState, row: int, col: int, letter: str, p
                 dazi_done = True
                 break
         if not dazi_done:
-            raise ValueError("Disarm needs a locked enemy cell in your word path")
+            raise ValueError("Disarm needs a enemy cell in your word path")
 
     apply_captures(temp, player)
     apply_locks(temp)

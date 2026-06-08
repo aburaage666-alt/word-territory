@@ -66,7 +66,7 @@ function terrainComboLabel(label, move = null) {
   if (raw === "BEACHHEAD") return "Beachhead — enemy territory breach";
   if (raw === "FRONTLINE PUSH") return "Frontline Push — border advanced";
   if (raw === "ROTATION RAID") return "Rotation Raid — letters rotated";
-  if (raw === "DAZI" || raw === "奪字") return "Disarm — neutralized locked enemy letter";
+  if (raw === "DAZI" || raw === "奪字") return "Disarm — neutralized enemy letter";
   return TERRAIN_LABELS[raw] || raw;
 }
 
@@ -1520,7 +1520,7 @@ const [thinking, setThinking] = useState(false);
             <li><strong>Seed</strong> — place a letter without capturing when stuck. Good for setting up future words.</li>
             <li><strong>Goal:</strong> More red cells than blue wins. Territory beats vocabulary.</li>
             <li><strong>Daily Challenge</strong> — same board worldwide each day. One attempt. Strong bot.</li>
-          <li><strong>Disarm</strong> — twice per game. Include a locked enemy letter in your word to neutralize that lock.</li>
+          <li><strong>Disarm</strong> — twice per game. Include a enemy letter in your word to neutralize that lock.</li>
           </ol>
         </div>
       )}
@@ -1534,7 +1534,7 @@ const [thinking, setThinking] = useState(false);
       {synergyFlash&&<div className="bnr synergy-flash">{synergyFlash}</div>}
           {comboBanner.length>0&&<div className="bnr combo">{comboBanner.join(" · ")}</div>}
       {error&&<div className="bnr err">{error}<button className="bx" onClick={()=>setError("")}>✕</button></div>}
-      {daziMode&&<div className="bnr dazi-help-banner">{"Disarm mode: include a locked enemy letter in your word to neutralize it."}</div>}
+      {daziMode&&<div className="bnr dazi-help-banner">{"Disarm mode: include a enemy letter in your word to neutralize it."}</div>}
       
 
 
@@ -1763,7 +1763,7 @@ const [thinking, setThinking] = useState(false);
               <button className="ba bseed" onClick={seed} disabled={!human() || daziMode || rotateMode} title={state?.selectedSynergy==="SEED_TACTICIAN" ? "Seed (free — +3T next word)" : "Seed costs 1 territory"}>
                 <span className="seed-label">{lastStand ? "Reclaim" : "Seed"}</span>{state?.selectedSynergy!=="SEED_TACTICIAN" && <span className="seed-cost">{lastStand ? "Free" : "Cost -1"}</span>}
               </button>
-              <button className={`ba bdazi ${daziMode ? "active" : ""}`} onClick={()=>{ setDaziMode(v=>!v); setRotateMode(false); setRotateTarget(null); setPath([]); setPlaced(null); setLetter(""); setPreview(null); setError(!daziMode ? "Disarm mode: connect existing letters including a locked enemy letter to neutralize that cell." : ""); }} disabled={!human() || rotateMode || daziRemaining<=0} title="No green square needed. Connect existing letters including a locked enemy letter.">Disarm {daziMode ? "ON " : ""}{daziRemaining}/2</button>{/* WT_DAZI_V2_TOGGLE_BUTTON */}
+              <button className={`ba bdazi ${daziMode ? "active" : ""}`} onClick={()=>{ setDaziMode(v=>!v); setRotateMode(false); setRotateTarget(null); setPath([]); setPlaced(null); setLetter(""); setPreview(null); setError(!daziMode ? "Disarm mode: connect existing letters including a enemy letter to neutralize that cell." : ""); }} disabled={!human() || rotateMode || daziRemaining<=0} title="No green square needed. Connect existing letters including a enemy letter.">Disarm {daziMode ? "ON " : ""}{daziRemaining}/2</button>{/* WT_DAZI_V2_TOGGLE_BUTTON */}
               {!rotateRaidUsed && <button className={`ba brotate ${rotateMode ? "active" : ""}`} onClick={()=>{ if(rotateTarget) performRotateRaid(); else { setRotateMode(v=>!v); setDaziMode(false); setRotateTarget(null); setPath([]); setPlaced(null); setPreview(null); setError("Choose the top-left of a 2x2 block. Rotation alone captures nothing."); } }} disabled={!human() || daziMode} title="Once per game. Rotate letters only in a 2x2 block touching enemy territory. Ownership does not move.">{rotateTarget ? "Confirm Rotation" : rotateMode ? "Pick 2x2" : "Rotation Raid"}</button>}
               {rotateMode && <button className="ba" onClick={()=>{setRotateMode(false);setRotateTarget(null);setError("");}} disabled={!human()}>Cancel</button>}
               <button className="ba" onClick={()=>{ setPath([]); setPlaced(null); setError(''); setPreview(null); setDaziMode(false); setRotateMode(false); setRotateTarget(null); }} disabled={!human()}>Clear</button>
