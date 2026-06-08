@@ -304,7 +304,9 @@ function LeaderboardModal({ onClose, dailyInfo, myRank }) {
   );
 }
 
-// WT_MODERN_SHARE_REPLAY_V3_CLEAN
+
+
+// WT_MODERN_SHARE_REPLAY_CLEAN_V7
 function wtModernBoardEmoji(board) {
   if (!Array.isArray(board)) return "";
   return board.map(row => (Array.isArray(row) ? row : []).map(cell => {
@@ -363,7 +365,7 @@ function wtModernDownloadShareCard({ state, redT, blueT, bestMove, moveLabel, da
   const blue = "#3b82f6";
   const dark = "#111827";
   ctx.fillStyle = "#f8fafc";
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = dark;
   ctx.font = "bold 64px system-ui, sans-serif";
   ctx.fillText(title, 70, 110);
@@ -378,23 +380,25 @@ function wtModernDownloadShareCard({ state, redT, blueT, bestMove, moveLabel, da
   ctx.fillStyle = dark;
   ctx.font = "32px system-ui, sans-serif";
   ctx.fillText(`Best Swing: ${wtModernMoveText(best, moveLabel)}`, 72, 315);
+
   const board = Array.isArray(state?.board) ? state.board : [];
   const rows = board.length || 7;
   const cols = Math.max(...board.map(r => Array.isArray(r) ? r.length : 0), 7);
   const size = Math.floor(Math.min(900 / cols, 820 / rows));
-  const startX = Math.floor((1080 - size * cols) / 2);
-  const startY = 400;
-  for (let r=0; r<rows; r++) {
-    for (let c=0; c<cols; c++) {
-      const cell = board?.[r]?.[c] || null;
-      ctx.fillStyle = !cell?.letter ? "#e5e7eb" : cell.owner === "RED" ? red : cell.owner === "BLUE" ? blue : "#9ca3af";
-      ctx.fillRect(startX+c*size+4, startY+r*size+4, size-8, size-8);
-      if (cell?.letter) {
+  const startX = Math.floor((canvas.width - size * cols) / 2);
+  const startY = 390;
+  for (let r = 0; r < rows; r++) {
+    const row = Array.isArray(board[r]) ? board[r] : [];
+    for (let c = 0; c < cols; c++) {
+      const cell = row[c] || {};
+      ctx.fillStyle = cell.owner === "RED" ? red : cell.owner === "BLUE" ? blue : "#e5e7eb";
+      ctx.fillRect(startX + c * size + 3, startY + r * size + 3, size - 6, size - 6);
+      if (cell.letter) {
         ctx.fillStyle = "#ffffff";
-        ctx.font = `bold ${Math.max(20, Math.floor(size*0.42))}px system-ui, sans-serif`;
+        ctx.font = `bold ${Math.max(20, Math.floor(size * 0.42))}px system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(String(cell.letter), startX+c*size+size/2, startY+r*size+size/2);
+        ctx.fillText(String(cell.letter), startX + c * size + size / 2, startY + r * size + size / 2);
         ctx.textAlign = "left";
         ctx.textBaseline = "alphabetic";
       }
@@ -407,13 +411,13 @@ function wtModernDownloadShareCard({ state, redT, blueT, bestMove, moveLabel, da
   a.href = canvas.toDataURL("image/png");
   a.download = `word-territory-${Date.now()}.png`;
   a.click();
-  try { navigator.vibrate?.([40,30,70]); } catch {}
+  try { navigator.vibrate?.([40, 30, 70]); } catch {}
 }
 
 function wtModernReplayBestSwing({ state, bestMove, moveLabel, setBoardBannerText }) {
   const best = bestMove || wtModernBestSwing(state?.moveHistory);
-  const text = `最大スイング：${wtModernMoveText(best, moveLabel)}`;
-  try { navigator.vibrate?.([70,40,100]); } catch {}
+  const text = `Best Swing: ${wtModernMoveText(best, moveLabel)}`;
+  try { navigator.vibrate?.([70, 40, 100]); } catch {}
   try {
     if (typeof setBoardBannerText === "function") {
       setBoardBannerText(text);
@@ -428,24 +432,23 @@ function wtModernSharePanel({ state, redT, blueT, bestMove, moveLabel, dailyInfo
   if (!state?.winner) return null;
   const shareText = wtModernShareText({ state, redT, blueT, bestMove, moveLabel, dailyInfo });
   return (
-    <div className="modern-share-panel">
-      <button className="bcopy" onClick={async()=>{
+    <div className="wt-share-panel">
+      <button className="bcopy" onClick={async () => {
         try {
           await navigator.clipboard.writeText(shareText);
           setCopied?.(true);
-          setTimeout(()=>setCopied?.(false), 2000);
-          try { navigator.vibrate?.(25); } catch {}
+          setTimeout(() => setCopied?.(false), 1800);
         } catch {}
-      }}>結果コピー</button>
-      <button className="bcopy" onClick={()=>wtModernDownloadShareCard({ state, redT, blueT, bestMove, moveLabel, dailyInfo })}>共有画像を保存</button>
-      <button className="bcopy" onClick={()=>wtModernReplayBestSwing({ state, bestMove, moveLabel, setBoardBannerText })}>最大スイング再生</button>
+      }}>Copy result</button>
+      <button className="bcopy" onClick={() => wtModernDownloadShareCard({ state, redT, blueT, bestMove, moveLabel, dailyInfo })}>Save share image</button>
+      <button className="bcopy" onClick={() => wtModernReplayBestSwing({ state, bestMove, moveLabel, setBoardBannerText })}>Replay best swing</button>
     </div>
   );
 }
 
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-// WT_MODERN_SHARE_REPLAY_V3_CLEAN
 
 export default function Home() {
   const [gameId, setGameId]     = useState("");
