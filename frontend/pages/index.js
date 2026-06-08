@@ -306,6 +306,9 @@ function LeaderboardModal({ onClose, dailyInfo, myRank }) {
 
 
 
+
+
+
 // WT_MODERN_SHARE_REPLAY_CLEAN_V7
 function wtModernBoardEmoji(board) {
   if (!Array.isArray(board)) return "";
