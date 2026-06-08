@@ -199,6 +199,41 @@ def _safe_turn_fallback(state: GameState):
     except Exception:
         return state
 
+# WT_QUICK5_BACKEND_V3C
+def _wt_apply_board_mode(state, board_mode="standard"):
+    mode = str(board_mode or "standard").lower().replace("-", "").replace("_", "")
+    if mode not in ("quick5", "quick5x5", "5x5", "quick"):
+        try:
+            state.boardMode = "standard"
+        except Exception:
+            pass
+        return state
+
+    try:
+        old = state.board
+        old_size = len(old)
+        size = 5
+        if old_size <= size:
+            try:
+                state.boardSize = old_size
+                state.boardMode = "quick5"
+            except Exception:
+                pass
+            return state
+        start = max(0, (old_size - size) // 2)
+        state.board = [list(row[start:start + size]) for row in old[start:start + size]]
+        state.boardSize = size
+        try:
+            state.boardMode = "quick5"
+        except Exception:
+            pass
+        try:
+            recalc_scores(state)
+        except Exception:
+            pass
+    except Exception as exc:
+        print("quick5 board crop failed:", exc)
+    return state
 
 @app.post("/games", response_model=CreateGameResponse)
 def create_game(payload: CreateGameRequest = CreateGameRequest()):
@@ -237,6 +272,7 @@ def make_move(game_id: str, payload: MoveRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     GAMES[game_id] = next_state
+    next_state = _wt_apply_board_mode(next_state, getattr(game_id, "boardMode", "standard"))
     return next_state
 
 

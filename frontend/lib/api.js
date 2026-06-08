@@ -21,7 +21,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
   }
 }
 
-export async function createGame(options = {}) {
+export async function createGame(options = {}, boardMode = "standard") {
   const payload = { botLevel: options.botLevel || "normal" };
   if (options.spectatorSeed !== undefined) payload.spectatorSeed = options.spectatorSeed;
   if (options.showcase !== undefined) payload.showcase = !!options.showcase;
